@@ -146,3 +146,11 @@ pub trait ByteBufStream {
         &'a mut self,
     ) -> impl Future<Output = Option<Result<Self::ByteBuf<'a>, Self::Error>>> + Send;
 }
+
+pub trait ByteBufStreamRead: SizedStorage {
+    fn read_at<'a>(
+        &'a mut self,
+        position: Self::Position,
+        size: Self::Size,
+    ) -> impl ByteBufStream + 'a;
+}
