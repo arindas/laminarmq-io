@@ -1,14 +1,14 @@
 use std::{
     fmt::Debug,
     future::Future,
-    ops::{Add, Deref, DerefMut},
+    ops::{Add, Deref},
 };
 
 use futures::{Stream, StreamExt};
 
 pub struct AppendLocation<P, S> {
     pub write_position: P,
-    pub bytes_written: S,
+    pub write_len: S,
 }
 
 pub trait SizedStorage {
@@ -43,9 +43,12 @@ pub enum StreamAppendError<AE, TE> {
     AppendError(AE),
 }
 
+pub type StreamAsyncAppendError<AA> =
+    StreamAppendError<<AA as AsyncAppend>::AppendError, <AA as AsyncTruncate>::TruncateError>;
+
 pub type StreamAppendResult<AA> = Result<
     AppendLocation<<AA as SizedStorage>::Position, <AA as SizedStorage>::Size>,
-    StreamAppendError<<AA as AsyncAppend>::AppendError, <AA as AsyncTruncate>::TruncateError>,
+    StreamAsyncAppendError<AA>,
 >;
 
 pub struct AsyncStreamAppend<'a, AA>(&'a mut AA);
@@ -83,7 +86,7 @@ where
             } {
                 Ok(AppendLocation {
                     write_position: _,
-                    bytes_written: buf_bytes_w,
+                    write_len: buf_bytes_w,
                 }) => {
                     bytes_written = bytes_written + buf_bytes_w;
                 }
@@ -98,14 +101,14 @@ where
 
         Ok(AppendLocation {
             write_position,
-            bytes_written,
+            write_len: bytes_written,
         })
     }
 }
 
 pub struct ReadBytes<T, S> {
-    pub bytes: T,
-    pub bytes_read: S,
+    pub read_bytes: T,
+    pub read_len: S,
 }
 
 pub trait AsyncRead: SizedStorage {
@@ -122,17 +125,17 @@ pub trait AsyncRead: SizedStorage {
     ) -> impl Future<Output = Result<ReadBytes<Self::ByteBuf<'a>, Self::Size>, Self::ReadError>>;
 }
 
-pub trait AsyncBufRead: SizedStorage {
-    type BufReadError: Debug;
+pub struct ReadBytesLen<T>(T);
 
-    fn read_at_buf<T>(
+pub trait AsyncBufRead: SizedStorage {
+    type BufReadError;
+
+    fn read_at_buf(
         &mut self,
         position: Self::Position,
         size: Self::Size,
-        buffer: T,
-    ) -> impl Future<Output = Result<ReadBytes<T, Self::Size>, Self::BufReadError>> + Send
-    where
-        T: DerefMut<Target = [u8]>;
+        buffer: &mut [u8],
+    ) -> impl Future<Output = Result<ReadBytesLen<Self::Size>, Self::BufReadError>>;
 }
 
 pub trait ByteBufStream {
@@ -144,13 +147,13 @@ pub trait ByteBufStream {
 
     fn next<'a>(
         &'a mut self,
-    ) -> impl Future<Output = Option<Result<Self::ByteBuf<'a>, Self::Error>>> + Send;
+    ) -> impl Future<Output = Option<Result<Self::ByteBuf<'a>, Self::Error>>>;
 }
 
-pub trait ByteBufStreamRead: SizedStorage {
-    fn read_at<'a>(
-        &'a mut self,
-        position: Self::Position,
-        size: Self::Size,
-    ) -> impl ByteBufStream + 'a;
+pub trait StreamRead: SizedStorage {
+    type Stream<'a>: ByteBufStream + 'a
+    where
+        Self: 'a;
+
+    fn read_at<'a>(&'a mut self, position: Self::Position, size: Self::Size) -> Self::Stream<'a>;
 }
