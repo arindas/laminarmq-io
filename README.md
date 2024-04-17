@@ -15,7 +15,7 @@ We want the following types of abstractions:
   maintains it own read and write buffers. Reads to the underlying rader never exceeds a specific
   limit. Both reads and writes are effectively buffered. We make optimaal use of both the read
   and write buffers to service reads. Don't allow allocations
-- A type that wraps a writer and a type that requires user provided buffers. This type
+- A type that wraps a writer and a reader that requires user provided buffers. This type
   maintains it own read and write buffers. Reads to the underlying rader are made using this types
   read bufer. Both reads and writes are effectively buffered. We make optimaal use of both the
   read and write buffers to service reads. Don't allow allocations
