@@ -1,5 +1,4 @@
 use std::{
-    fmt::Debug,
     future::Future,
     ops::{Add, Deref},
 };
