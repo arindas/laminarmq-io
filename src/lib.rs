@@ -1,6 +1,6 @@
 use std::{
     future::Future,
-    ops::{Add, AddAssign, Deref},
+    ops::{Add, AddAssign, Deref, SubAssign},
 };
 
 use futures::{Stream, StreamExt};
@@ -146,5 +146,64 @@ pub trait StreamRead: SizedEntity {
     where
         Self: 'a;
 
-    fn read_at(&mut self, position: Self::Position, size: Self::Size) -> Self::Stream<'_>;
+    fn read_stream_at(&mut self, position: Self::Position, size: Self::Size) -> Self::Stream<'_>;
+}
+
+#[allow(unused)]
+pub struct AsyncReadByteBufStream<'a, R, P, S> {
+    reader: &'a mut R,
+
+    position: P,
+    bytes_remaining: S,
+}
+
+impl<'a, R> ByteBufStream for AsyncReadByteBufStream<'a, R, R::Position, R::Size>
+where
+    R: AsyncRead,
+    R::Size: SubAssign,
+{
+    type ByteBuf<'x> = R::ByteBuf<'x>
+    where
+        Self: 'x;
+
+    type Error = R::ReadError;
+
+    async fn next(&mut self) -> Option<Result<Self::ByteBuf<'_>, Self::Error>> {
+        if self.bytes_remaining == 0.into() {
+            return None;
+        }
+
+        let read_bytes = self
+            .reader
+            .read_at(self.position, self.bytes_remaining)
+            .await;
+
+        if read_bytes.is_err() {
+            return read_bytes.err().map(Err);
+        }
+
+        let read_bytes = read_bytes.ok()?;
+
+        self.bytes_remaining -= read_bytes.read_len;
+
+        Some(Ok(read_bytes.read_bytes))
+    }
+}
+
+impl<R> StreamRead for R
+where
+    R: AsyncRead,
+    R::Size: SubAssign,
+{
+    type Stream<'x> = AsyncReadByteBufStream<'x, R, R::Position, R::Size>
+    where
+        Self: 'x;
+
+    fn read_stream_at(&mut self, position: Self::Position, size: Self::Size) -> Self::Stream<'_> {
+        AsyncReadByteBufStream {
+            reader: self,
+            position,
+            bytes_remaining: size,
+        }
+    }
 }
