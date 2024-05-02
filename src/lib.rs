@@ -1,15 +1,31 @@
 use std::{
+    cmp::min,
+    convert::Into,
     future::Future,
-    ops::{Add, AddAssign, Deref, SubAssign},
+    marker::PhantomData,
+    ops::{Add, AddAssign, Deref, Sub, SubAssign},
 };
 
 use futures::{Stream, StreamExt};
+use num::{CheckedSub, Unsigned};
 
-pub trait Quantifier: Add<Output = Self> + AddAssign + Ord + From<usize> + Copy {}
+pub trait Quantifier:
+    Add<Output = Self>
+    + Sub
+    + AddAssign
+    + Ord
+    + From<usize>
+    + Into<usize>
+    + Unsigned
+    + CheckedSub
+    + Clone
+    + Copy
+{
+}
 
 pub trait SizedEntity {
     type Position: Quantifier + From<Self::Size>;
-    type Size: Quantifier;
+    type Size: Quantifier + From<Self::Position>;
 
     fn size(&self) -> Self::Size;
 }
@@ -85,7 +101,7 @@ where
                 }) => bytes_written += write_len,
 
                 Err(error) => file
-                    .truncate(write_position)
+                    .truncate(write_position.into())
                     .await
                     .map_err(AsyncStreamAppendError::TruncateError)
                     .and_then(|_| Err(error))?,
@@ -93,7 +109,7 @@ where
         }
 
         Ok(AppendLocation {
-            write_position,
+            write_position: write_position.into(),
             write_len: bytes_written,
         })
     }
@@ -102,6 +118,18 @@ where
 pub struct ReadBytes<T, S> {
     pub read_bytes: T,
     pub read_len: S,
+}
+
+impl<T, S> ReadBytes<T, S> {
+    pub fn map<U, F>(self, map_fn: F) -> ReadBytes<U, S>
+    where
+        F: FnOnce(T) -> U,
+    {
+        ReadBytes {
+            read_bytes: map_fn(self.read_bytes),
+            read_len: self.read_len,
+        }
+    }
 }
 
 pub trait AsyncRead: SizedEntity {
@@ -204,6 +232,116 @@ where
             reader: self,
             position,
             bytes_remaining: size,
+        }
+    }
+}
+
+pub struct BufferedAsyncRead<'a, R, P, S> {
+    reader: R,
+    read_limit: S,
+
+    write_buffer: &'a mut [u8],
+
+    flushed_size: S,
+
+    current_size: S,
+
+    _phantom_data: PhantomData<(P, S)>,
+}
+
+impl<'a, R> SizedEntity for BufferedAsyncRead<'a, R, R::Position, R::Size>
+where
+    R: SizedEntity,
+{
+    type Position = R::Position;
+
+    type Size = R::Size;
+
+    fn size(&self) -> Self::Size {
+        self.current_size
+    }
+}
+
+pub enum BufferedAsyncReadByteBuf<'a, T> {
+    Buffered(&'a [u8]),
+    Read(T),
+}
+
+impl<'a, T> Deref for BufferedAsyncReadByteBuf<'a, T>
+where
+    T: Deref<Target = [u8]> + 'a,
+{
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            BufferedAsyncReadByteBuf::Buffered(buffered) => buffered,
+            BufferedAsyncReadByteBuf::Read(read_bytes) => read_bytes,
+        }
+    }
+}
+
+impl<'a, R> AsyncRead for BufferedAsyncRead<'a, R, R::Position, R::Size>
+where
+    R: AsyncRead,
+{
+    type ByteBuf<'x> = BufferedAsyncReadByteBuf<'x, R::ByteBuf<'x>>
+    where
+        Self: 'x;
+
+    type ReadError = ();
+
+    async fn read_at(
+        &mut self,
+        position: Self::Position,
+        size: Self::Size,
+    ) -> Result<ReadBytes<Self::ByteBuf<'_>, Self::Size>, Self::ReadError> {
+        enum ReadStrategy {
+            Inner,
+            Buffered,
+        }
+
+        match match match match position {
+            pos if pos >= Into::<R::Position>::into(self.size()) => Err(()),
+            pos if pos
+                >= Into::<R::Position>::into(
+                    self.flushed_size + self.write_buffer.len().into(),
+                ) =>
+            {
+                Err(())
+            }
+            pos if pos >= Into::<R::Position>::into(self.flushed_size) => {
+                Ok((self.size(), ReadStrategy::Buffered))
+            }
+            _ => Ok((self.flushed_size, ReadStrategy::Inner)),
+        } {
+            Ok((end, read_strategy)) => {
+                Ok(((end - Into::<R::Size>::into(position)), read_strategy))
+            }
+            Err(e) => Err(e),
+        } {
+            Ok((size_limit, _)) if size_limit == 0.into() => Err(()),
+            Ok((size_limit, read_strategy)) => {
+                Ok((min(size, min(size_limit, self.read_limit)), read_strategy))
+            }
+            Err(e) => Err(e),
+        } {
+            Ok((size, ReadStrategy::Buffered)) => {
+                let offset: usize = position.into() - self.flushed_size.into();
+                Ok(ReadBytes {
+                    read_bytes: BufferedAsyncReadByteBuf::Buffered(
+                        &self.write_buffer[offset..(offset + size.into())],
+                    ),
+                    read_len: size,
+                })
+            }
+            Ok((size, ReadStrategy::Inner)) => self
+                .reader
+                .read_at(position, size)
+                .await
+                .map(|x| x.map(BufferedAsyncReadByteBuf::Read))
+                .map_err(|_| ()),
+            Err(e) => Err(e),
         }
     }
 }
