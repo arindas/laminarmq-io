@@ -2,7 +2,6 @@ use std::{
     cmp::min,
     convert::Into,
     future::Future,
-    marker::PhantomData,
     ops::{Add, AddAssign, Deref, Sub, SubAssign},
 };
 
@@ -236,20 +235,24 @@ where
     }
 }
 
-pub struct BufferedAsyncRead<'a, R, P, S> {
+pub struct BufferedReaderDirectWriter<'a, R, S> {
     reader: R,
     read_limit: S,
 
     write_buffer: &'a mut [u8],
+    _write_buffer_end: usize,
 
     flushed_size: S,
-
     current_size: S,
-
-    _phantom_data: PhantomData<(P, S)>,
 }
 
-impl<'a, R> SizedEntity for BufferedAsyncRead<'a, R, R::Position, R::Size>
+pub enum BufferedReaderDirectWriterError<RE> {
+    ReadError(RE),
+    ReadBeyondWrittenArea,
+    BufferOutOfBounds,
+}
+
+impl<'a, R> SizedEntity for BufferedReaderDirectWriter<'a, R, R::Size>
 where
     R: SizedEntity,
 {
@@ -262,12 +265,12 @@ where
     }
 }
 
-pub enum BufferedAsyncReadByteBuf<'a, T> {
+pub enum BufferedReaderDirectWriterByteBuf<'a, T> {
     Buffered(&'a [u8]),
     Read(T),
 }
 
-impl<'a, T> Deref for BufferedAsyncReadByteBuf<'a, T>
+impl<'a, T> Deref for BufferedReaderDirectWriterByteBuf<'a, T>
 where
     T: Deref<Target = [u8]> + 'a,
 {
@@ -275,21 +278,21 @@ where
 
     fn deref(&self) -> &Self::Target {
         match self {
-            BufferedAsyncReadByteBuf::Buffered(buffered) => buffered,
-            BufferedAsyncReadByteBuf::Read(read_bytes) => read_bytes,
+            BufferedReaderDirectWriterByteBuf::Buffered(buffered) => buffered,
+            BufferedReaderDirectWriterByteBuf::Read(read_bytes) => read_bytes,
         }
     }
 }
 
-impl<'a, R> AsyncRead for BufferedAsyncRead<'a, R, R::Position, R::Size>
+impl<'a, R> AsyncRead for BufferedReaderDirectWriter<'a, R, R::Size>
 where
     R: AsyncRead,
 {
-    type ByteBuf<'x> = BufferedAsyncReadByteBuf<'x, R::ByteBuf<'x>>
+    type ByteBuf<'x> = BufferedReaderDirectWriterByteBuf<'x, R::ByteBuf<'x>>
     where
         Self: 'x;
 
-    type ReadError = ();
+    type ReadError = BufferedReaderDirectWriterError<R::ReadError>;
 
     async fn read_at(
         &mut self,
@@ -301,46 +304,60 @@ where
             Buffered,
         }
 
-        match match match match position {
-            pos if pos >= Into::<R::Position>::into(self.size()) => Err(()),
-            pos if pos
-                >= Into::<R::Position>::into(
-                    self.flushed_size + self.write_buffer.len().into(),
-                ) =>
-            {
-                Err(())
+        enum ReadRequest<P, S> {
+            Buffrered { offset: usize, end: usize },
+            Inner { position: P, size: S },
+        }
+
+        match match match position {
+            pos if pos >= Into::<R::Position>::into(self.size()) => {
+                Err(BufferedReaderDirectWriterError::ReadBeyondWrittenArea)
             }
             pos if pos >= Into::<R::Position>::into(self.flushed_size) => {
                 Ok((self.size(), ReadStrategy::Buffered))
             }
             _ => Ok((self.flushed_size, ReadStrategy::Inner)),
-        } {
-            Ok((end, read_strategy)) => {
-                Ok(((end - Into::<R::Size>::into(position)), read_strategy))
-            }
-            Err(e) => Err(e),
-        } {
-            Ok((size_limit, _)) if size_limit == 0.into() => Err(()),
-            Ok((size_limit, read_strategy)) => {
-                Ok((min(size, min(size_limit, self.read_limit)), read_strategy))
-            }
-            Err(e) => Err(e),
-        } {
-            Ok((size, ReadStrategy::Buffered)) => {
+        }
+        .map(|(end, read_strategy)| ((end - Into::<R::Size>::into(position)), read_strategy))
+        .map(|(available_bytes, read_strategy)| {
+            (
+                min(size, min(available_bytes, self.read_limit)),
+                read_strategy,
+            )
+        }) {
+            Ok((allowed_read_size, ReadStrategy::Buffered)) => {
                 let offset: usize = position.into() - self.flushed_size.into();
-                Ok(ReadBytes {
-                    read_bytes: BufferedAsyncReadByteBuf::Buffered(
-                        &self.write_buffer[offset..(offset + size.into())],
-                    ),
-                    read_len: size,
+
+                Ok(ReadRequest::Buffrered {
+                    offset,
+                    end: offset + allowed_read_size.into(),
                 })
             }
-            Ok((size, ReadStrategy::Inner)) => self
+            Ok((allowed_read_size, ReadStrategy::Inner)) => Ok(ReadRequest::Inner {
+                position,
+                size: allowed_read_size,
+            }),
+
+            Err(e) => Err(e),
+        } {
+            Ok(ReadRequest::Buffrered { offset, end })
+                if offset >= self.write_buffer.len() || end > self.write_buffer.len() =>
+            {
+                Err(BufferedReaderDirectWriterError::BufferOutOfBounds)
+            }
+            Ok(ReadRequest::Buffrered { offset, end }) => Ok(ReadBytes {
+                read_bytes: BufferedReaderDirectWriterByteBuf::Buffered(
+                    &self.write_buffer[offset..end],
+                ),
+                read_len: (end - offset).into(),
+            }),
+            Ok(ReadRequest::Inner { position, size }) => self
                 .reader
                 .read_at(position, size)
                 .await
-                .map(|x| x.map(BufferedAsyncReadByteBuf::Read))
-                .map_err(|_| ()),
+                .map(|x| x.map(BufferedReaderDirectWriterByteBuf::Read))
+                .map_err(BufferedReaderDirectWriterError::ReadError),
+
             Err(e) => Err(e),
         }
     }
