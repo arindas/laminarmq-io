@@ -322,11 +322,11 @@ where
     }
 }
 
-pub struct DirectReaderBufferedWriter<'a, R, S> {
+pub struct DirectReaderBufferedWriter<R, B, S> {
     inner: R,
     read_limit: S,
 
-    write_buffer: Buffer<&'a mut [u8]>,
+    append_buffer: Buffer<B>,
 
     flushed_size: S,
     current_size: S,
@@ -336,21 +336,22 @@ pub enum DirectReaderBufferedWriterError<RE, AE> {
     ReadError(RE),
     AppendError(AE),
     ReadBeyondWrittenArea,
-    WriterBufferError(BufferError),
+    AppendBufferError(BufferError),
 }
 
 #[allow(unused)]
-impl<'a, R> DirectReaderBufferedWriter<'a, R, R::Size>
+impl<R, B> DirectReaderBufferedWriter<R, B, R::Size>
 where
     R: AsyncRead + AsyncAppend,
+    B: DerefMut<Target = [u8]>,
 {
     async fn flush(
         &mut self,
     ) -> Result<(), DirectReaderBufferedWriterError<R::ReadError, R::AppendError>> {
         let buffered_bytes = self
-            .write_buffer
+            .append_buffer
             .get_read_slice(..)
-            .map_err(DirectReaderBufferedWriterError::WriterBufferError)?;
+            .map_err(DirectReaderBufferedWriterError::AppendBufferError)?;
 
         self.inner
             .append(buffered_bytes)
@@ -359,13 +360,13 @@ where
 
         self.flushed_size += buffered_bytes.len().into();
 
-        self.write_buffer.clear();
+        self.append_buffer.clear();
 
         Ok(())
     }
 }
 
-impl<'a, R> SizedEntity for DirectReaderBufferedWriter<'a, R, R::Size>
+impl<R, B> SizedEntity for DirectReaderBufferedWriter<R, B, R::Size>
 where
     R: SizedEntity,
 {
@@ -397,9 +398,10 @@ where
     }
 }
 
-impl<'a, R> AsyncRead for DirectReaderBufferedWriter<'a, R, R::Size>
+impl<R, B> AsyncRead for DirectReaderBufferedWriter<R, B, R::Size>
 where
     R: AsyncRead + AsyncAppend,
+    B: DerefMut<Target = [u8]>,
 {
     type ByteBuf<'x> = DirectReaderBufferedWriterByteBuf<'x, R::ByteBuf<'x>>
     where
@@ -454,13 +456,13 @@ where
             Err(e) => Err(e),
         } {
             Ok(ReadRequest::Buffrered { offset, end }) => self
-                .write_buffer
+                .append_buffer
                 .get_read_slice(offset..end)
                 .map(|x| ReadBytes {
                     read_bytes: DirectReaderBufferedWriterByteBuf::Buffered(x),
                     read_len: x.len().into(),
                 })
-                .map_err(DirectReaderBufferedWriterError::WriterBufferError),
+                .map_err(DirectReaderBufferedWriterError::AppendBufferError),
             Ok(ReadRequest::Inner { position, size }) => self
                 .inner
                 .read_at(position, size)
@@ -473,9 +475,10 @@ where
     }
 }
 
-impl<'a, R> AsyncAppend for DirectReaderBufferedWriter<'a, R, R::Size>
+impl<R, B> AsyncAppend for DirectReaderBufferedWriter<R, B, R::Size>
 where
     R: AsyncRead + AsyncAppend,
+    B: DerefMut<Target = [u8]>,
 {
     type AppendError = DirectReaderBufferedWriterError<R::ReadError, R::AppendError>;
 
@@ -490,8 +493,8 @@ where
         }
 
         let append_strategy = match bytes.len() {
-            n if n >= self.write_buffer.capacity() => AppendStrategy::Direct,
-            n if n >= self.write_buffer.remaining() => AppendStrategy::Flush,
+            n if n >= self.append_buffer.capacity() => AppendStrategy::Direct,
+            n if n >= self.append_buffer.remaining() => AppendStrategy::Flush,
             _ => AppendStrategy::Buffered,
         };
 
@@ -503,14 +506,14 @@ where
             strat => strat,
         } {
             AppendStrategy::Buffered | AppendStrategy::Flush => {
-                let write_position = self.flushed_size + self.write_buffer.len().into();
+                let write_position = self.flushed_size + self.append_buffer.len().into();
 
                 let append_location = AppendLocation {
                     write_position: Into::<R::Position>::into(write_position),
                     write_len: self
-                        .write_buffer
+                        .append_buffer
                         .append(bytes)
-                        .map_err(DirectReaderBufferedWriterError::WriterBufferError)?
+                        .map_err(DirectReaderBufferedWriterError::AppendBufferError)?
                         .into(),
                 };
 
