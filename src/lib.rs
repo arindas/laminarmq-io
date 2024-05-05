@@ -237,7 +237,7 @@ where
 
 pub struct Buffer<T> {
     buffer: T,
-    end: usize,
+    len: usize,
 }
 
 pub enum BufferError {
@@ -256,7 +256,7 @@ where
     }
 
     pub fn len(&self) -> usize {
-        self.end
+        self.len
     }
 
     pub fn capacity(&self) -> usize {
@@ -275,16 +275,16 @@ where
             (_, Bound::Excluded(&0)) => Err(BufferError::BadSliceRange),
             (Bound::Included(&start), Bound::Included(&end)) => Ok((start, end)),
             (Bound::Included(&start), Bound::Excluded(&end)) => Ok((start, end - 1)),
-            (Bound::Included(&start), Bound::Unbounded) => Ok((start, self.end - 1)),
+            (Bound::Included(&start), Bound::Unbounded) => Ok((start, self.len - 1)),
             (Bound::Excluded(&start), Bound::Included(&end)) => Ok((start + 1, end)),
             (Bound::Excluded(&start), Bound::Excluded(&end)) => Ok((start + 1, end - 1)),
-            (Bound::Excluded(&start), Bound::Unbounded) => Ok((start + 1, self.end - 1)),
+            (Bound::Excluded(&start), Bound::Unbounded) => Ok((start + 1, self.len - 1)),
             (Bound::Unbounded, Bound::Included(&end)) => Ok((0, end)),
             (Bound::Unbounded, Bound::Excluded(&end)) => Ok((0, end - 1)),
-            (Bound::Unbounded, Bound::Unbounded) => Ok((0, self.end - 1)),
+            (Bound::Unbounded, Bound::Unbounded) => Ok((0, self.len - 1)),
         } {
             Ok((start, end)) if start > end => Err(BufferError::BadSliceRange),
-            Ok((start, end)) if start >= self.end || end >= self.end => {
+            Ok((start, end)) if start >= self.len || end >= self.len => {
                 Err(BufferError::IndexOutOfBounds)
             }
             Ok((start, end)) => Ok((start, end)),
@@ -295,14 +295,14 @@ where
     }
 
     pub fn get_append_slice_mut(&mut self) -> &mut [X] {
-        &mut self.buffer[self.end..]
+        &mut self.buffer[self.len..]
     }
 
     pub fn advance(&mut self, n: usize) -> Result<usize, BufferError> {
         if n > self.remaining() {
             Err(BufferError::BufferOverflow)
         } else {
-            self.end += n;
+            self.len += n;
             Ok(n)
         }
     }
@@ -318,7 +318,7 @@ where
     }
 
     pub fn clear(&mut self) {
-        self.end = 0
+        self.len = 0
     }
 }
 
