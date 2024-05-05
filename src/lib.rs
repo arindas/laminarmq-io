@@ -2,7 +2,7 @@ use std::{
     cmp::min,
     convert::Into,
     future::Future,
-    ops::{Add, AddAssign, Deref, Sub, SubAssign},
+    ops::{Add, AddAssign, Bound, Deref, DerefMut, RangeBounds, Sub, SubAssign},
 };
 
 use futures::{Stream, StreamExt};
@@ -40,7 +40,7 @@ pub trait AsyncTruncate: SizedEntity {
     fn truncate(
         &mut self,
         position: Self::Position,
-    ) -> impl Future<Output = Result<(), Self::TruncateError>> + Send;
+    ) -> impl Future<Output = Result<(), Self::TruncateError>>;
 }
 
 pub trait AsyncAppend: SizedEntity {
@@ -49,7 +49,7 @@ pub trait AsyncAppend: SizedEntity {
     fn append(
         &mut self,
         bytes: &[u8],
-    ) -> impl Future<Output = Result<AppendLocation<Self::Position, Self::Size>, Self::AppendError>> + Send;
+    ) -> impl Future<Output = Result<AppendLocation<Self::Position, Self::Size>, Self::AppendError>>;
 }
 
 pub enum AsyncStreamAppendError<AE, TE> {
@@ -235,24 +235,137 @@ where
     }
 }
 
-pub struct BufferedReaderDirectWriter<'a, R, S> {
-    reader: R,
+pub struct Buffer<T> {
+    buffer: T,
+    end: usize,
+}
+
+pub enum BufferError {
+    IndexOutOfBounds,
+    BadSliceRange,
+    BufferOverflow,
+}
+
+impl<T, X> Buffer<T>
+where
+    T: DerefMut<Target = [X]>,
+    X: Copy,
+{
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn len(&self) -> usize {
+        self.end
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.buffer.len()
+    }
+
+    pub fn remaining(&self) -> usize {
+        self.capacity() - self.len()
+    }
+
+    pub fn get_read_slice<R>(&self, range: R) -> Result<&[X], BufferError>
+    where
+        R: RangeBounds<usize>,
+    {
+        let (start, end) = match match (range.start_bound(), range.end_bound()) {
+            (_, Bound::Excluded(&0)) => Err(BufferError::BadSliceRange),
+            (Bound::Included(&start), Bound::Included(&end)) => Ok((start, end)),
+            (Bound::Included(&start), Bound::Excluded(&end)) => Ok((start, end - 1)),
+            (Bound::Included(&start), Bound::Unbounded) => Ok((start, self.end - 1)),
+            (Bound::Excluded(&start), Bound::Included(&end)) => Ok((start + 1, end)),
+            (Bound::Excluded(&start), Bound::Excluded(&end)) => Ok((start + 1, end - 1)),
+            (Bound::Excluded(&start), Bound::Unbounded) => Ok((start + 1, self.end - 1)),
+            (Bound::Unbounded, Bound::Included(&end)) => Ok((0, end)),
+            (Bound::Unbounded, Bound::Excluded(&end)) => Ok((0, end - 1)),
+            (Bound::Unbounded, Bound::Unbounded) => Ok((0, self.end - 1)),
+        } {
+            Ok((start, end)) if start > end => Err(BufferError::BadSliceRange),
+            Ok((start, end)) if start >= self.end || end >= self.end => {
+                Err(BufferError::IndexOutOfBounds)
+            }
+            Ok((start, end)) => Ok((start, end)),
+            Err(e) => Err(e),
+        }?;
+
+        Ok(&self.buffer[start..=end])
+    }
+
+    pub fn get_append_slice_mut(&mut self) -> &mut [X] {
+        &mut self.buffer[self.end..]
+    }
+
+    pub fn advance(&mut self, n: usize) -> Result<usize, BufferError> {
+        if n > self.remaining() {
+            Err(BufferError::BufferOverflow)
+        } else {
+            self.end += n;
+            Ok(n)
+        }
+    }
+
+    pub fn append(&mut self, src: &[X]) -> Result<usize, BufferError> {
+        if src.len() > self.remaining() {
+            return Err(BufferError::BufferOverflow);
+        }
+
+        self.get_append_slice_mut()[..src.len()].copy_from_slice(src);
+
+        self.advance(src.len())
+    }
+
+    pub fn clear(&mut self) {
+        self.end = 0
+    }
+}
+
+pub struct DirectReaderBufferedWriter<'a, R, S> {
+    inner: R,
     read_limit: S,
 
-    write_buffer: &'a mut [u8],
-    _write_buffer_end: usize,
+    write_buffer: Buffer<&'a mut [u8]>,
 
     flushed_size: S,
     current_size: S,
 }
 
-pub enum BufferedReaderDirectWriterError<RE> {
+pub enum DirectReaderBufferedWriterError<RE, AE> {
     ReadError(RE),
+    AppendError(AE),
     ReadBeyondWrittenArea,
-    BufferOutOfBounds,
+    WriterBufferError(BufferError),
 }
 
-impl<'a, R> SizedEntity for BufferedReaderDirectWriter<'a, R, R::Size>
+#[allow(unused)]
+impl<'a, R> DirectReaderBufferedWriter<'a, R, R::Size>
+where
+    R: AsyncRead + AsyncAppend,
+{
+    async fn flush(
+        &mut self,
+    ) -> Result<(), DirectReaderBufferedWriterError<R::ReadError, R::AppendError>> {
+        let buffered_bytes = self
+            .write_buffer
+            .get_read_slice(..)
+            .map_err(DirectReaderBufferedWriterError::WriterBufferError)?;
+
+        self.inner
+            .append(buffered_bytes)
+            .await
+            .map_err(DirectReaderBufferedWriterError::AppendError)?;
+
+        self.flushed_size += buffered_bytes.len().into();
+
+        self.write_buffer.clear();
+
+        Ok(())
+    }
+}
+
+impl<'a, R> SizedEntity for DirectReaderBufferedWriter<'a, R, R::Size>
 where
     R: SizedEntity,
 {
@@ -265,12 +378,12 @@ where
     }
 }
 
-pub enum BufferedReaderDirectWriterByteBuf<'a, T> {
+pub enum DirectReaderBufferedWriterByteBuf<'a, T> {
     Buffered(&'a [u8]),
     Read(T),
 }
 
-impl<'a, T> Deref for BufferedReaderDirectWriterByteBuf<'a, T>
+impl<'a, T> Deref for DirectReaderBufferedWriterByteBuf<'a, T>
 where
     T: Deref<Target = [u8]> + 'a,
 {
@@ -278,21 +391,21 @@ where
 
     fn deref(&self) -> &Self::Target {
         match self {
-            BufferedReaderDirectWriterByteBuf::Buffered(buffered) => buffered,
-            BufferedReaderDirectWriterByteBuf::Read(read_bytes) => read_bytes,
+            DirectReaderBufferedWriterByteBuf::Buffered(buffered) => buffered,
+            DirectReaderBufferedWriterByteBuf::Read(read_bytes) => read_bytes,
         }
     }
 }
 
-impl<'a, R> AsyncRead for BufferedReaderDirectWriter<'a, R, R::Size>
+impl<'a, R> AsyncRead for DirectReaderBufferedWriter<'a, R, R::Size>
 where
-    R: AsyncRead,
+    R: AsyncRead + AsyncAppend,
 {
-    type ByteBuf<'x> = BufferedReaderDirectWriterByteBuf<'x, R::ByteBuf<'x>>
+    type ByteBuf<'x> = DirectReaderBufferedWriterByteBuf<'x, R::ByteBuf<'x>>
     where
         Self: 'x;
 
-    type ReadError = BufferedReaderDirectWriterError<R::ReadError>;
+    type ReadError = DirectReaderBufferedWriterError<R::ReadError, R::AppendError>;
 
     async fn read_at(
         &mut self,
@@ -311,7 +424,7 @@ where
 
         match match match position {
             pos if pos >= Into::<R::Position>::into(self.size()) => {
-                Err(BufferedReaderDirectWriterError::ReadBeyondWrittenArea)
+                Err(DirectReaderBufferedWriterError::ReadBeyondWrittenArea)
             }
             pos if pos >= Into::<R::Position>::into(self.flushed_size) => {
                 Ok((self.size(), ReadStrategy::Buffered))
@@ -340,25 +453,83 @@ where
 
             Err(e) => Err(e),
         } {
-            Ok(ReadRequest::Buffrered { offset, end })
-                if offset >= self.write_buffer.len() || end > self.write_buffer.len() =>
-            {
-                Err(BufferedReaderDirectWriterError::BufferOutOfBounds)
-            }
-            Ok(ReadRequest::Buffrered { offset, end }) => Ok(ReadBytes {
-                read_bytes: BufferedReaderDirectWriterByteBuf::Buffered(
-                    &self.write_buffer[offset..end],
-                ),
-                read_len: (end - offset).into(),
-            }),
+            Ok(ReadRequest::Buffrered { offset, end }) => self
+                .write_buffer
+                .get_read_slice(offset..end)
+                .map(|x| ReadBytes {
+                    read_bytes: DirectReaderBufferedWriterByteBuf::Buffered(x),
+                    read_len: x.len().into(),
+                })
+                .map_err(DirectReaderBufferedWriterError::WriterBufferError),
             Ok(ReadRequest::Inner { position, size }) => self
-                .reader
+                .inner
                 .read_at(position, size)
                 .await
-                .map(|x| x.map(BufferedReaderDirectWriterByteBuf::Read))
-                .map_err(BufferedReaderDirectWriterError::ReadError),
+                .map(|x| x.map(DirectReaderBufferedWriterByteBuf::Read))
+                .map_err(DirectReaderBufferedWriterError::ReadError),
 
             Err(e) => Err(e),
+        }
+    }
+}
+
+impl<'a, R> AsyncAppend for DirectReaderBufferedWriter<'a, R, R::Size>
+where
+    R: AsyncRead + AsyncAppend,
+{
+    type AppendError = DirectReaderBufferedWriterError<R::ReadError, R::AppendError>;
+
+    async fn append(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<AppendLocation<Self::Position, Self::Size>, Self::AppendError> {
+        enum AppendStrategy {
+            Buffered,
+            Direct,
+            Flush,
+        }
+
+        let append_strategy = match bytes.len() {
+            n if n >= self.write_buffer.capacity() => AppendStrategy::Direct,
+            n if n >= self.write_buffer.remaining() => AppendStrategy::Flush,
+            _ => AppendStrategy::Buffered,
+        };
+
+        match match append_strategy {
+            strat @ (AppendStrategy::Flush | AppendStrategy::Direct) => {
+                self.flush().await?;
+                strat
+            }
+            strat => strat,
+        } {
+            AppendStrategy::Buffered | AppendStrategy::Flush => {
+                let write_position = self.flushed_size + self.write_buffer.len().into();
+
+                let append_location = AppendLocation {
+                    write_position: Into::<R::Position>::into(write_position),
+                    write_len: self
+                        .write_buffer
+                        .append(bytes)
+                        .map_err(DirectReaderBufferedWriterError::WriterBufferError)?
+                        .into(),
+                };
+
+                self.current_size += append_location.write_len;
+
+                Ok(append_location)
+            }
+            AppendStrategy::Direct => {
+                let append_location = self
+                    .inner
+                    .append(bytes)
+                    .await
+                    .map_err(DirectReaderBufferedWriterError::AppendError)?;
+
+                self.flushed_size += append_location.write_len;
+                self.current_size += append_location.write_len;
+
+                Ok(append_location)
+            }
         }
     }
 }
