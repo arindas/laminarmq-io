@@ -326,7 +326,7 @@ where
 
 pub struct DirectReaderBufferedWriter<R, B, S> {
     inner: R,
-    read_limit: S,
+    read_limit: Option<S>,
 
     append_buffer: Buffer<B>,
 
@@ -438,7 +438,7 @@ where
         .map(|(end, read_strategy)| ((end - Into::<R::Size>::into(position)), read_strategy))
         .map(|(available_bytes, read_strategy)| {
             (
-                min(size, min(available_bytes, self.read_limit)),
+                min(size, min(available_bytes, self.read_limit.unwrap_or(size))),
                 read_strategy,
             )
         }) {
