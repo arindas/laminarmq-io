@@ -80,6 +80,8 @@ pub trait AsyncBufRead: SizedEntity {
 On top of these traits, we aim to provide the following abstractions:
 
 - [x] Streaming read / write ([`#L222`](./src/lib.rs/#L222), [`#L63`](./src/lib.rs/#L63))
+- [ ] Buffered Reader
+- [ ] Buffered Writer
 - [ ] Direct Reader and Direct Writer
 - [x] Direct Reader and Buffered Writer ([`#L326`](./src/lib.rs#L326))
 - [ ] Buffered Reader and Direct Writer
