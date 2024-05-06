@@ -357,7 +357,10 @@ where
         self.anchor_position = new_anchor_position;
     }
 
-    pub fn advance_anchor(&mut self, n: usize) {
+    pub fn advance_anchor<S>(&mut self, n: S)
+    where
+        S: Quantifier + Into<P>,
+    {
         self.re_anchor(self.anchor_position() + n.into())
     }
 
@@ -436,12 +439,16 @@ where
             .get_read_slice(..)
             .map_err(DirectReaderBufferedWriterError::AppendBufferError)?;
 
-        self.inner
+        let AppendLocation {
+            write_position: _,
+            write_len,
+        } = self
+            .inner
             .append(buffered_bytes)
             .await
             .map_err(DirectReaderBufferedWriterError::AppendError)?;
 
-        self.append_buffer.advance_anchor(buffered_bytes.len());
+        self.append_buffer.advance_anchor(write_len);
 
         Ok(())
     }
@@ -600,8 +607,7 @@ where
             (strat, Err(error)) => (strat, Err(error)),
         } {
             (AppendStrategy::Direct, Ok(append_location)) => {
-                self.append_buffer
-                    .advance_anchor(append_location.write_len.into());
+                self.append_buffer.advance_anchor(append_location.write_len);
                 Ok(append_location)
             }
             (_, result) => result,
