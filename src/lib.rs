@@ -99,11 +99,13 @@ where
                     write_len,
                 }) => bytes_written += write_len,
 
-                Err(error) => file
-                    .truncate(write_position.into())
-                    .await
-                    .map_err(AsyncStreamAppendError::TruncateError)
-                    .and_then(|_| Err(error))?,
+                Err(error) => {
+                    return file
+                        .truncate(write_position.into())
+                        .await
+                        .map_err(AsyncStreamAppendError::TruncateError)
+                        .and_then(|_| Err(error))
+                }
             }
         }
 
