@@ -12,6 +12,7 @@ pub trait Quantifier:
     Add<Output = Self>
     + Sub
     + AddAssign
+    + SubAssign
     + Ord
     + From<usize>
     + Into<usize>
@@ -189,7 +190,6 @@ pub struct AsyncReadByteBufStream<'a, R, P, S> {
 impl<'a, R> ByteBufStream for AsyncReadByteBufStream<'a, R, R::Position, R::Size>
 where
     R: AsyncRead,
-    R::Size: SubAssign,
 {
     type ByteBuf<'x> = R::ByteBuf<'x>
     where
@@ -222,7 +222,6 @@ where
 impl<R> StreamRead for R
 where
     R: AsyncRead,
-    R::Size: SubAssign,
 {
     type Stream<'x> = AsyncReadByteBufStream<'x, R, R::Position, R::Size>
     where
