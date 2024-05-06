@@ -14,7 +14,7 @@ laminarmq-storage = { git = "https://github.com/arindas/laminarmq-storage.git" }
 
 ## Overview
 
-This create aims to provide the following traits:
+This crate provides the following traits:
 
 ```rust
 
@@ -77,13 +77,13 @@ pub trait AsyncBufRead: SizedEntity {
 
 ```
 
-On top of these traits, we need the following abstractions:
+On top of these traits, we aim to provide the following abstractions:
 
-- Streaming read / write
-- Direct Reader and Direct Writer
-- Direct Reader and Buffered Writer
-- Buffered Reader and Direct Writer
-- Buffered Reader and Buffered Writer
+- [x] Streaming read / write ([`#L222`](./src/lib.rs/#L222), [`#L63`](./src/lib.rs/#L63))
+- [ ] Direct Reader and Direct Writer
+- [x] Direct Reader and Buffered Writer ([`#L326`](./src/lib.rs#L326))
+- [ ] Buffered Reader and Direct Writer
+- [ ] Buffered Reader and Buffered Writer
 
 Importantly, this library acknowledges the fact that even simply reading may require
 mutation (such as advancing the filepointer) on different platforms. Hence all
