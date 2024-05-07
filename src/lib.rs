@@ -407,7 +407,7 @@ impl<B, P> Deref for AnchoredBuffer<B, P> {
     }
 }
 
-pub struct DirectReaderBufferedWriter<R, B, P, S> {
+pub struct DirectReaderBufferedAppender<R, B, P, S> {
     inner: R,
     read_limit: Option<S>,
 
@@ -416,7 +416,7 @@ pub struct DirectReaderBufferedWriter<R, B, P, S> {
     size: S,
 }
 
-pub enum DirectReaderBufferedWriterError<RE, AE> {
+pub enum DirectReaderBufferedAppenderError<RE, AE> {
     ReadError(RE),
     AppendError(AE),
     ReadBeyondWrittenArea,
@@ -426,18 +426,18 @@ pub enum DirectReaderBufferedWriterError<RE, AE> {
 }
 
 #[allow(unused)]
-impl<R, B> DirectReaderBufferedWriter<R, B, R::Position, R::Size>
+impl<R, B> DirectReaderBufferedAppender<R, B, R::Position, R::Size>
 where
     R: AsyncRead + AsyncAppend,
     B: DerefMut<Target = [u8]>,
 {
     async fn flush(
         &mut self,
-    ) -> Result<(), DirectReaderBufferedWriterError<R::ReadError, R::AppendError>> {
+    ) -> Result<(), DirectReaderBufferedAppenderError<R::ReadError, R::AppendError>> {
         let buffered_bytes = self
             .append_buffer
             .get_read_slice(..)
-            .map_err(DirectReaderBufferedWriterError::AppendBufferError)?;
+            .map_err(DirectReaderBufferedAppenderError::AppendBufferError)?;
 
         let AppendLocation {
             write_position: _,
@@ -446,7 +446,7 @@ where
             .inner
             .append(buffered_bytes)
             .await
-            .map_err(DirectReaderBufferedWriterError::AppendError)?;
+            .map_err(DirectReaderBufferedAppenderError::AppendError)?;
 
         self.append_buffer.advance_anchor(write_len);
 
@@ -454,7 +454,7 @@ where
     }
 }
 
-impl<R, B> SizedEntity for DirectReaderBufferedWriter<R, B, R::Position, R::Size>
+impl<R, B> SizedEntity for DirectReaderBufferedAppender<R, B, R::Position, R::Size>
 where
     R: SizedEntity,
 {
@@ -467,12 +467,12 @@ where
     }
 }
 
-pub enum DirectReaderBufferedWriterByteBuf<'a, T> {
+pub enum DirectReaderBufferedAppenderByteBuf<'a, T> {
     Buffered(&'a [u8]),
     Read(T),
 }
 
-impl<'a, T> Deref for DirectReaderBufferedWriterByteBuf<'a, T>
+impl<'a, T> Deref for DirectReaderBufferedAppenderByteBuf<'a, T>
 where
     T: Deref<Target = [u8]> + 'a,
 {
@@ -480,22 +480,22 @@ where
 
     fn deref(&self) -> &Self::Target {
         match self {
-            DirectReaderBufferedWriterByteBuf::Buffered(buffered) => buffered,
-            DirectReaderBufferedWriterByteBuf::Read(read_bytes) => read_bytes,
+            DirectReaderBufferedAppenderByteBuf::Buffered(buffered) => buffered,
+            DirectReaderBufferedAppenderByteBuf::Read(read_bytes) => read_bytes,
         }
     }
 }
 
-impl<R, B> AsyncRead for DirectReaderBufferedWriter<R, B, R::Position, R::Size>
+impl<R, B> AsyncRead for DirectReaderBufferedAppender<R, B, R::Position, R::Size>
 where
     R: AsyncRead + AsyncAppend,
     B: DerefMut<Target = [u8]>,
 {
-    type ByteBuf<'x> = DirectReaderBufferedWriterByteBuf<'x, R::ByteBuf<'x>>
+    type ByteBuf<'x> = DirectReaderBufferedAppenderByteBuf<'x, R::ByteBuf<'x>>
     where
         Self: 'x;
 
-    type ReadError = DirectReaderBufferedWriterError<R::ReadError, R::AppendError>;
+    type ReadError = DirectReaderBufferedAppenderError<R::ReadError, R::AppendError>;
 
     async fn read_at(
         &mut self,
@@ -509,7 +509,7 @@ where
 
         match match match position {
             pos if !self.contains(pos) => {
-                Err(DirectReaderBufferedWriterError::ReadBeyondWrittenArea)
+                Err(DirectReaderBufferedAppenderError::ReadBeyondWrittenArea)
             }
             pos if self.append_buffer.contains_position(pos) => Ok((
                 self.append_buffer.bytes_avail_from_position(pos),
@@ -521,15 +521,15 @@ where
                 .checked_sub(&pos)
                 .map(Into::into)
                 .map(|avail| (avail, ReadStrategy::Inner))
-                .ok_or(DirectReaderBufferedWriterError::ReadBufferGap),
+                .ok_or(DirectReaderBufferedAppenderError::ReadBufferGap),
         } {
             Ok((0, _)) if size == 0.into() => {
                 return Ok(ReadBytes {
-                    read_bytes: DirectReaderBufferedWriterByteBuf::Buffered(&[]),
+                    read_bytes: DirectReaderBufferedAppenderByteBuf::Buffered(&[]),
                     read_len: 0.into(),
                 })
             }
-            Ok((0, _)) => Err(DirectReaderBufferedWriterError::ReadUnderflow),
+            Ok((0, _)) => Err(DirectReaderBufferedAppenderError::ReadUnderflow),
             Ok((avail, read_strategy)) => Ok((
                 min(size, min(avail.into(), self.read_limit.unwrap_or(size))),
                 read_strategy,
@@ -540,28 +540,28 @@ where
                 .append_buffer
                 .read_at(position, read_size)
                 .map(|x| ReadBytes {
-                    read_bytes: DirectReaderBufferedWriterByteBuf::Buffered(x),
+                    read_bytes: DirectReaderBufferedAppenderByteBuf::Buffered(x),
                     read_len: x.len().into(),
                 })
-                .map_err(DirectReaderBufferedWriterError::AppendBufferError),
+                .map_err(DirectReaderBufferedAppenderError::AppendBufferError),
             Ok((read_size, ReadStrategy::Inner)) => self
                 .inner
                 .read_at(position, read_size)
                 .await
-                .map(|x| x.map(DirectReaderBufferedWriterByteBuf::Read))
-                .map_err(DirectReaderBufferedWriterError::ReadError),
+                .map(|x| x.map(DirectReaderBufferedAppenderByteBuf::Read))
+                .map_err(DirectReaderBufferedAppenderError::ReadError),
 
             Err(error) => Err(error),
         }
     }
 }
 
-impl<R, B> AsyncAppend for DirectReaderBufferedWriter<R, B, R::Position, R::Size>
+impl<R, B> AsyncAppend for DirectReaderBufferedAppender<R, B, R::Position, R::Size>
 where
     R: AsyncRead + AsyncAppend,
     B: DerefMut<Target = [u8]>,
 {
-    type AppendError = DirectReaderBufferedWriterError<R::ReadError, R::AppendError>;
+    type AppendError = DirectReaderBufferedAppenderError<R::ReadError, R::AppendError>;
 
     async fn append(
         &mut self,
@@ -591,7 +591,7 @@ where
                 strat,
                 self.append_buffer
                     .append(bytes)
-                    .map_err(DirectReaderBufferedWriterError::AppendBufferError)
+                    .map_err(DirectReaderBufferedAppenderError::AppendBufferError)
                     .map(|x| AppendLocation {
                         write_position: append_buffer_end,
                         write_len: R::Size::from(x),
@@ -602,7 +602,7 @@ where
                 self.inner
                     .append(bytes)
                     .await
-                    .map_err(DirectReaderBufferedWriterError::AppendError),
+                    .map_err(DirectReaderBufferedAppenderError::AppendError),
             ),
             (strat, Err(error)) => (strat, Err(error)),
         } {
@@ -620,4 +620,34 @@ where
             Err(error) => Err(error),
         }
     }
+}
+
+#[allow(unused)]
+pub struct BufferedReaderBufferedAppender<R, RB, AB, P, S> {
+    inner: R,
+    read_limit: Option<S>,
+
+    read_buffer: AnchoredBuffer<RB, P>,
+    append_buffer: AnchoredBuffer<AB, P>,
+
+    size: S,
+}
+
+impl<R, RB, AB> SizedEntity for BufferedReaderBufferedAppender<R, RB, AB, R::Position, R::Size>
+where
+    R: SizedEntity,
+{
+    type Position = R::Position;
+
+    type Size = R::Size;
+
+    fn size(&self) -> Self::Size {
+        self.size
+    }
+}
+
+pub enum BufferedReaderBufferedAppenderByteBuf<'a, T> {
+    ReadBuffered(&'a [u8]),
+    AppendBuffered(&'a [u8]),
+    Read(T),
 }
