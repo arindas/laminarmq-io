@@ -153,7 +153,9 @@ pub trait AsyncRead: SizedEntity {
     ) -> impl Future<Output = Result<ReadBytes<Self::ByteBuf<'_>, Self::Size>, Self::ReadError>>;
 }
 
-pub struct ReadBytesLen<T>(T);
+pub struct ReadBytesLen<T> {
+    read_len: T,
+}
 
 pub trait AsyncBufRead: SizedEntity {
     type BufReadError;
@@ -304,7 +306,7 @@ where
         &mut self.buffer[self.len..]
     }
 
-    pub fn advance(&mut self, n: usize) -> Result<usize, BufferError> {
+    pub fn advance_end_by(&mut self, n: usize) -> Result<usize, BufferError> {
         if n > self.remaining() {
             Err(BufferError::BufferOverflow)
         } else {
@@ -320,7 +322,7 @@ where
 
         self.get_append_slice_mut()[..src.len()].copy_from_slice(src);
 
-        self.advance(src.len())
+        self.advance_end_by(src.len())
     }
 
     pub fn clear(&mut self) {
@@ -329,6 +331,10 @@ where
 
     pub fn contains(&self, pos: usize) -> bool {
         pos < self.len()
+    }
+
+    pub fn contains_within_capacity(&self, pos: usize) -> bool {
+        pos < self.capacity()
     }
 }
 
@@ -348,6 +354,12 @@ where
             .unwrap_or(false)
     }
 
+    pub fn contains_position_within_capacity(&self, position: P) -> bool {
+        self.offset(position)
+            .map(|pos| self.contains_within_capacity(pos))
+            .unwrap_or(false)
+    }
+
     pub fn anchor_position(&self) -> P {
         self.anchor_position
     }
@@ -357,7 +369,7 @@ where
         self.anchor_position = new_anchor_position;
     }
 
-    pub fn advance_anchor<S>(&mut self, n: S)
+    pub fn advance_anchor_by<S>(&mut self, n: S)
     where
         S: Quantifier + Into<P>,
     {
@@ -384,7 +396,7 @@ where
         self.anchor_position() + P::from(self.len())
     }
 
-    pub fn bytes_avail_from_position(&self, position: P) -> usize {
+    pub fn avail_from_pos(&self, position: P) -> usize {
         if let Some(pos) = self.offset(position) {
             self.len() - pos
         } else {
@@ -448,7 +460,7 @@ where
             .await
             .map_err(DirectReaderBufferedAppenderError::AppendError)?;
 
-        self.append_buffer.advance_anchor(write_len);
+        self.append_buffer.advance_anchor_by(write_len);
 
         Ok(())
     }
@@ -512,7 +524,7 @@ where
                 Err(DirectReaderBufferedAppenderError::ReadBeyondWrittenArea)
             }
             pos if self.append_buffer.contains_position(pos) => Ok((
-                self.append_buffer.bytes_avail_from_position(pos),
+                self.append_buffer.avail_from_pos(pos),
                 ReadStrategy::Buffered,
             )),
             pos => self
@@ -607,7 +619,8 @@ where
             (strat, Err(error)) => (strat, Err(error)),
         } {
             (AppendStrategy::Direct, Ok(append_location)) => {
-                self.append_buffer.advance_anchor(append_location.write_len);
+                self.append_buffer
+                    .advance_anchor_by(append_location.write_len);
                 Ok(append_location)
             }
             (_, result) => result,
@@ -646,8 +659,121 @@ where
     }
 }
 
-pub enum BufferedReaderBufferedAppenderByteBuf<'a, T> {
-    ReadBuffered(&'a [u8]),
-    AppendBuffered(&'a [u8]),
-    Read(T),
+pub enum BufferedReaderBufferedAppenderError<RE, AE> {
+    AppendError(AE),
+    ReadError(RE),
+
+    AppendBufferError(BufferError),
+    ReadBufferError(BufferError),
+
+    ReadBeyondWrittenArea,
+
+    ReadLimitUnknown,
+
+    InvalidOp,
+}
+
+impl<R, RB, AB> AsyncRead for BufferedReaderBufferedAppender<R, RB, AB, R::Position, R::Size>
+where
+    R: AsyncBufRead + AsyncAppend,
+    RB: DerefMut<Target = [u8]>,
+    AB: DerefMut<Target = [u8]>,
+{
+    type ByteBuf<'x> = &'x [u8]
+    where
+        Self: 'x;
+
+    type ReadError = BufferedReaderBufferedAppenderError<R::BufReadError, R::AppendError>;
+
+    async fn read_at(
+        &mut self,
+        position: Self::Position,
+        size: Self::Size,
+    ) -> Result<ReadBytes<Self::ByteBuf<'_>, Self::Size>, Self::ReadError> {
+        enum BuffferedReadStrategy {
+            ReanchorAndRefillRead,
+            FillRead,
+            UseRead,
+            UseAppend,
+        }
+
+        match match match match match match position {
+            pos if !self.contains(pos) => Err(Self::ReadError::ReadBeyondWrittenArea),
+            pos if self.append_buffer.contains_position(pos) => Ok((
+                Some(self.append_buffer.avail_from_pos(pos)),
+                BuffferedReadStrategy::UseAppend,
+            )),
+            pos if self.read_buffer.contains_position(pos) => Ok((
+                Some(self.read_buffer.avail_from_pos(pos)),
+                BuffferedReadStrategy::UseRead,
+            )),
+            pos if self.read_buffer.contains_position_within_capacity(pos)
+                && pos == self.read_buffer.end() =>
+            {
+                Ok((None, BuffferedReadStrategy::FillRead))
+            }
+            _ => Ok((None, BuffferedReadStrategy::ReanchorAndRefillRead)),
+        } {
+            Ok((avail, strat @ BuffferedReadStrategy::ReanchorAndRefillRead)) => {
+                self.read_buffer.re_anchor(position);
+                Ok((avail, strat))
+            }
+            result => result,
+        } {
+            Ok((
+                avail,
+                strat @ (BuffferedReadStrategy::ReanchorAndRefillRead
+                | BuffferedReadStrategy::FillRead),
+            )) => self
+                .inner
+                .read_at_buf(
+                    position,
+                    self.read_buffer.remaining().into(),
+                    self.read_buffer.get_append_slice_mut(),
+                )
+                .await
+                .map_err(Self::ReadError::ReadError)
+                .and_then(|ReadBytesLen { read_len }| {
+                    self.read_buffer
+                        .advance_end_by(read_len.into())
+                        .map_err(Self::ReadError::ReadBufferError)
+                })
+                .map(|_| (avail, strat)),
+            result => result,
+        } {
+            Ok((None, strat @ BuffferedReadStrategy::ReanchorAndRefillRead)) => {
+                Ok((Some(self.read_buffer.len()), strat))
+            }
+            Ok((None, strat @ BuffferedReadStrategy::FillRead)) => {
+                Ok((Some(self.read_buffer.avail_from_pos(position)), strat))
+            }
+            result => result,
+        } {
+            Ok((Some(avail), strat)) => Ok((
+                min(size, min(avail.into(), self.read_limit.unwrap_or(size))),
+                strat,
+            )),
+            Ok((None, _)) => Err(Self::ReadError::ReadLimitUnknown),
+            Err(error) => Err(error),
+        } {
+            Ok((
+                read_size,
+                BuffferedReadStrategy::ReanchorAndRefillRead
+                | BuffferedReadStrategy::FillRead
+                | BuffferedReadStrategy::UseRead,
+            )) => self
+                .read_buffer
+                .read_at(position, read_size)
+                .map_err(Self::ReadError::ReadBufferError),
+            Ok((read_size, BuffferedReadStrategy::UseAppend)) => self
+                .append_buffer
+                .read_at(position, read_size)
+                .map_err(Self::ReadError::AppendBufferError),
+            Err(error) => Err(error),
+        }
+        .map(|read_bytes| ReadBytes {
+            read_bytes,
+            read_len: read_bytes.len().into(),
+        })
+    }
 }
