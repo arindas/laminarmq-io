@@ -640,8 +640,8 @@ pub struct BufferedReaderBufferedAppender<R, RB, AB, P, S> {
     inner: R,
     read_limit: Option<S>,
 
-    read_buffer: AnchoredBuffer<RB, P>,
     append_buffer: AnchoredBuffer<AB, P>,
+    read_buffer: AnchoredBuffer<RB, P>,
 
     size: S,
 }
@@ -728,7 +728,12 @@ where
                 .inner
                 .read_at_buf(
                     position,
-                    self.read_buffer.remaining().into(),
+                    min(
+                        (self.append_buffer.anchor_position() - position)
+                            .into()
+                            .into(),
+                        self.read_buffer.remaining().into(),
+                    ),
                     self.read_buffer.get_append_slice_mut(),
                 )
                 .await
