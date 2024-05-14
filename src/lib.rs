@@ -271,7 +271,7 @@ where
         self.buffer.len()
     }
 
-    pub fn remaining(&self) -> usize {
+    pub fn avail_to_append(&self) -> usize {
         self.capacity() - self.len()
     }
 
@@ -307,7 +307,7 @@ where
     }
 
     pub fn advance_end_by(&mut self, n: usize) -> Result<usize, BufferError> {
-        if n > self.remaining() {
+        if n > self.avail_to_append() {
             Err(BufferError::BufferOverflow)
         } else {
             self.len += n;
@@ -316,7 +316,7 @@ where
     }
 
     pub fn append(&mut self, src: &[X]) -> Result<usize, BufferError> {
-        if src.len() > self.remaining() {
+        if src.len() > self.avail_to_append() {
             return Err(BufferError::BufferOverflow);
         }
 
@@ -396,7 +396,7 @@ where
         self.anchor_position() + P::from(self.len())
     }
 
-    pub fn avail_from_pos(&self, position: P) -> usize {
+    pub fn avail_to_read_from_pos(&self, position: P) -> usize {
         if let Some(pos) = self.offset(position) {
             self.len() - pos
         } else {
@@ -524,7 +524,7 @@ where
                 Err(DirectReaderBufferedAppenderError::ReadBeyondWrittenArea)
             }
             pos if self.append_buffer.contains_position(pos) => Ok((
-                self.append_buffer.avail_from_pos(pos),
+                self.append_buffer.avail_to_read_from_pos(pos),
                 ReadStrategy::Buffered,
             )),
             pos => self
@@ -580,27 +580,33 @@ where
         bytes: &[u8],
     ) -> Result<AppendLocation<Self::Position, Self::Size>, Self::AppendError> {
         enum AppendStrategy {
+            Inner,
             Buffered,
-            FlushedAndBuffered,
-            Direct,
         }
 
+        enum Action {
+            Flush(AppendStrategy),
+            AppendBuffered,
+        }
+
+        struct AdvanceAnchor;
+
         let append_strategy = match bytes.len() {
-            n if n >= self.append_buffer.capacity() => AppendStrategy::Direct,
-            n if n >= self.append_buffer.remaining() => AppendStrategy::FlushedAndBuffered,
-            _ => AppendStrategy::Buffered,
+            n if n >= self.append_buffer.capacity() => Action::Flush(AppendStrategy::Inner),
+            n if n >= self.append_buffer.avail_to_append() => {
+                Action::Flush(AppendStrategy::Buffered)
+            }
+            _ => Action::AppendBuffered,
         };
 
         let append_buffer_end = self.append_buffer.end();
 
         match match match match append_strategy {
-            strat @ (AppendStrategy::FlushedAndBuffered | AppendStrategy::Direct) => {
-                (strat, self.flush().await)
-            }
-            strat => (strat, Ok(())),
+            Action::AppendBuffered => (AppendStrategy::Buffered, Ok(())),
+            Action::Flush(strat) => (strat, self.flush().await),
         } {
-            (strat @ (AppendStrategy::Buffered | AppendStrategy::FlushedAndBuffered), Ok(_)) => (
-                strat,
+            (AppendStrategy::Buffered, Ok(_)) => (
+                None,
                 self.append_buffer
                     .append(bytes)
                     .map_err(DirectReaderBufferedAppenderError::AppendBufferError)
@@ -609,16 +615,16 @@ where
                         write_len: R::Size::from(x),
                     }),
             ),
-            (strat @ AppendStrategy::Direct, Ok(_)) => (
-                strat,
+            (AppendStrategy::Inner, Ok(_)) => (
+                Some(AdvanceAnchor),
                 self.inner
                     .append(bytes)
                     .await
                     .map_err(DirectReaderBufferedAppenderError::AppendError),
             ),
-            (strat, Err(error)) => (strat, Err(error)),
+            (_, Err(error)) => (None, Err(error)),
         } {
-            (AppendStrategy::Direct, Ok(append_location)) => {
+            (Some(AdvanceAnchor), Ok(append_location)) => {
                 self.append_buffer
                     .advance_anchor_by(append_location.write_len);
                 Ok(append_location)
@@ -710,13 +716,13 @@ where
             pos if self.append_buffer.contains_position(pos) => {
                 Ok(Action::Read(ReadStrategy::Buffered((
                     BufferedReadStrategy::UseAppend,
-                    self.append_buffer.avail_from_pos(pos),
+                    self.append_buffer.avail_to_read_from_pos(pos),
                 ))))
             }
             pos if self.read_buffer.contains_position(pos) => {
                 Ok(Action::Read(ReadStrategy::Buffered((
                     BufferedReadStrategy::UseRead,
-                    self.read_buffer.avail_from_pos(pos),
+                    self.read_buffer.avail_to_read_from_pos(pos),
                 ))))
             }
             pos if self.read_buffer.contains_position_within_capacity(pos)
@@ -744,7 +750,7 @@ where
                         (self.append_buffer.anchor_position() - inner_read_pos)
                             .into()
                             .into(),
-                        self.read_buffer.remaining().into(),
+                        self.read_buffer.avail_to_append().into(),
                     ),
                     self.read_buffer.get_append_slice_mut(),
                 )
@@ -758,7 +764,7 @@ where
                 .map(|_| {
                     (
                         BufferedReadStrategy::UseRead,
-                        self.read_buffer.avail_from_pos(position),
+                        self.read_buffer.avail_to_read_from_pos(position),
                     )
                 }),
             Err(err) => Err(err),
