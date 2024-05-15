@@ -726,7 +726,7 @@ where
                 ))))
             }
             pos if self.read_buffer.contains_position_within_capacity(pos)
-                && pos == self.read_buffer.end() =>
+                && pos >= self.read_buffer.end() =>
             {
                 Ok(Action::Read(ReadStrategy::Fill(self.read_buffer.end())))
             }
