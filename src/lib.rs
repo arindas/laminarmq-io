@@ -419,11 +419,11 @@ impl<B, P> Deref for AnchoredBuffer<B, P> {
     }
 }
 
-pub struct DirectReaderBufferedAppender<R, B, P, S> {
+pub struct DirectReaderBufferedAppender<R, AB, P, S> {
     inner: R,
     read_limit: Option<S>,
 
-    append_buffer: AnchoredBuffer<B, P>,
+    append_buffer: AnchoredBuffer<AB, P>,
 
     size: S,
 }
@@ -438,10 +438,10 @@ pub enum DirectReaderBufferedAppenderError<RE, AE> {
 }
 
 #[allow(unused)]
-impl<R, B> DirectReaderBufferedAppender<R, B, R::Position, R::Size>
+impl<R, AB> DirectReaderBufferedAppender<R, AB, R::Position, R::Size>
 where
     R: AsyncRead + AsyncAppend,
-    B: DerefMut<Target = [u8]>,
+    AB: DerefMut<Target = [u8]>,
 {
     async fn flush(
         &mut self,
@@ -466,7 +466,7 @@ where
     }
 }
 
-impl<R, B> SizedEntity for DirectReaderBufferedAppender<R, B, R::Position, R::Size>
+impl<R, AB> SizedEntity for DirectReaderBufferedAppender<R, AB, R::Position, R::Size>
 where
     R: SizedEntity,
 {
@@ -498,10 +498,10 @@ where
     }
 }
 
-impl<R, B> AsyncRead for DirectReaderBufferedAppender<R, B, R::Position, R::Size>
+impl<R, AB> AsyncRead for DirectReaderBufferedAppender<R, AB, R::Position, R::Size>
 where
     R: AsyncRead + AsyncAppend,
-    B: DerefMut<Target = [u8]>,
+    AB: DerefMut<Target = [u8]>,
 {
     type ByteBuf<'x> = DirectReaderBufferedAppenderByteBuf<'x, R::ByteBuf<'x>>
     where
@@ -566,10 +566,10 @@ where
     }
 }
 
-impl<R, B> AsyncAppend for DirectReaderBufferedAppender<R, B, R::Position, R::Size>
+impl<R, AB> AsyncAppend for DirectReaderBufferedAppender<R, AB, R::Position, R::Size>
 where
     R: AsyncRead + AsyncAppend,
-    B: DerefMut<Target = [u8]>,
+    AB: DerefMut<Target = [u8]>,
 {
     type AppendError = DirectReaderBufferedAppenderError<R::ReadError, R::AppendError>;
 
@@ -1160,5 +1160,132 @@ where
             read_bytes,
             read_len: read_bytes.len().into(),
         })
+    }
+}
+
+#[allow(unused)]
+pub struct BufferedAppender<R, AB, P, S> {
+    inner: R,
+
+    append_buffer: AnchoredBuffer<AB, P>,
+
+    size: S,
+}
+
+pub enum BufferedAppenderError<AE> {
+    AppendError(AE),
+    AppendBufferError(BufferError),
+}
+
+impl<R, AB> SizedEntity for BufferedAppender<R, AB, R::Position, R::Size>
+where
+    R: AsyncAppend,
+{
+    type Position = R::Position;
+
+    type Size = R::Size;
+
+    fn size(&self) -> Self::Size {
+        self.size
+    }
+}
+
+#[allow(unused)]
+impl<R, AB> BufferedAppender<R, AB, R::Position, R::Size>
+where
+    R: AsyncAppend,
+    AB: DerefMut<Target = [u8]>,
+{
+    async fn flush(&mut self) -> Result<(), BufferedAppenderError<R::AppendError>> {
+        let buffered_bytes = self
+            .append_buffer
+            .get_read_slice(..)
+            .map_err(BufferedAppenderError::AppendBufferError)?;
+
+        let AppendLocation {
+            write_position: _,
+            write_len,
+        } = self
+            .inner
+            .append(buffered_bytes)
+            .await
+            .map_err(BufferedAppenderError::AppendError)?;
+
+        self.append_buffer.advance_anchor_by(write_len);
+
+        Ok(())
+    }
+}
+
+impl<R, AB> AsyncAppend for BufferedAppender<R, AB, R::Position, R::Size>
+where
+    R: AsyncAppend,
+    AB: DerefMut<Target = [u8]>,
+{
+    type AppendError = BufferedAppenderError<R::AppendError>;
+
+    async fn append(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<AppendLocation<Self::Position, Self::Size>, Self::AppendError> {
+        enum AppendStrategy {
+            Inner,
+            Buffered,
+        }
+
+        enum Action {
+            Flush(AppendStrategy),
+            AppendBuffered,
+        }
+
+        struct AdvanceAnchor;
+
+        let append_strategy = match bytes.len() {
+            n if n >= self.append_buffer.capacity() => Action::Flush(AppendStrategy::Inner),
+            n if n >= self.append_buffer.avail_to_append() => {
+                Action::Flush(AppendStrategy::Buffered)
+            }
+            _ => Action::AppendBuffered,
+        };
+
+        let append_buffer_end = self.append_buffer.end_position();
+
+        match match match match append_strategy {
+            Action::AppendBuffered => (AppendStrategy::Buffered, Ok(())),
+            Action::Flush(strat) => (strat, self.flush().await),
+        } {
+            (AppendStrategy::Buffered, Ok(_)) => (
+                None,
+                self.append_buffer
+                    .append(bytes)
+                    .map_err(Self::AppendError::AppendBufferError)
+                    .map(|x| AppendLocation {
+                        write_position: append_buffer_end,
+                        write_len: R::Size::from(x),
+                    }),
+            ),
+            (AppendStrategy::Inner, Ok(_)) => (
+                Some(AdvanceAnchor),
+                self.inner
+                    .append(bytes)
+                    .await
+                    .map_err(Self::AppendError::AppendError),
+            ),
+            (_, Err(error)) => (None, Err(error)),
+        } {
+            (Some(AdvanceAnchor), Ok(append_location)) => {
+                self.append_buffer
+                    .advance_anchor_by(append_location.write_len);
+                Ok(append_location)
+            }
+            (_, result) => result,
+        } {
+            Ok(append_location) => {
+                self.size += append_location.write_len;
+                Ok(append_location)
+            }
+
+            Err(error) => Err(error),
+        }
     }
 }

@@ -86,7 +86,7 @@ On top of these traits, we aim to provide the following abstractions:
 
 - [x] Streaming read / append
 - [x] Buffered Reader
-- [ ] Buffered Appender
+- [x] Buffered Appender
 - [x] Direct Reader and Buffered Appender
 - [x] Buffered Reader and Direct Appender
 - [x] Buffered Reader and Buffered Appender
