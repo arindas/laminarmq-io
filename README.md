@@ -79,13 +79,12 @@ pub trait AsyncBufRead: SizedEntity {
 
 On top of these traits, we aim to provide the following abstractions:
 
-- [x] Streaming read / append ([`#L222`](./src/lib.rs/#L222), [`#L63`](./src/lib.rs/#L63))
+- [x] Streaming read / append
 - [ ] Buffered Reader
 - [ ] Buffered Appender
-- [ ] Direct Reader and Direct Appender
-- [x] Direct Reader and Buffered Appender ([`#L326`](./src/lib.rs#L326))
-- [ ] Buffered Reader and Direct Appender
-- [x] Buffered Reader and Buffered Appender ([`#L643`](./src/lib.rs#L643))
+- [x] Direct Reader and Buffered Appender
+- [x] Buffered Reader and Direct Appender
+- [x] Buffered Reader and Buffered Appender
 
 Importantly, this library acknowledges the fact that even simply reading may require
 mutation (such as advancing the filepointer) on different platforms. Hence all

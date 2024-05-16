@@ -392,7 +392,7 @@ where
         self.get_read_slice(start..end)
     }
 
-    pub fn end(&self) -> P {
+    pub fn end_position(&self) -> P {
         self.anchor_position() + P::from(self.len())
     }
 
@@ -597,7 +597,7 @@ where
             _ => Action::AppendBuffered,
         };
 
-        let append_buffer_end = self.append_buffer.end();
+        let append_buffer_end = self.append_buffer.end_position();
 
         match match match match append_strategy {
             Action::AppendBuffered => (AppendStrategy::Buffered, Ok(())),
@@ -671,10 +671,6 @@ pub enum BufferedReaderBufferedAppenderError<RE, AE> {
     ReadBufferError(BufferError),
 
     ReadBeyondWrittenArea,
-
-    ReadLimitUnknown,
-
-    InvalidOp,
 }
 
 impl<R, RB, AB> AsyncRead for BufferedReaderBufferedAppender<R, RB, AB, R::Position, R::Size>
@@ -700,7 +696,10 @@ where
         }
 
         enum ReadStrategy<P> {
-            Buffered((BufferedReadStrategy, usize)),
+            Buffered {
+                strat: BufferedReadStrategy,
+                avail: usize,
+            },
             Fill(P),
         }
 
@@ -712,21 +711,23 @@ where
         match match match match match position {
             pos if !self.contains(pos) => Err(Self::ReadError::ReadBeyondWrittenArea),
             pos if self.append_buffer.contains_position(pos) => {
-                Ok(Action::Read(ReadStrategy::Buffered((
-                    BufferedReadStrategy::UseAppend,
-                    self.append_buffer.avail_to_read_from_pos(pos),
-                ))))
+                Ok(Action::Read(ReadStrategy::Buffered {
+                    strat: BufferedReadStrategy::UseAppend,
+                    avail: self.append_buffer.avail_to_read_from_pos(pos),
+                }))
             }
             pos if self.read_buffer.contains_position(pos) => {
-                Ok(Action::Read(ReadStrategy::Buffered((
-                    BufferedReadStrategy::UseRead,
-                    self.read_buffer.avail_to_read_from_pos(pos),
-                ))))
+                Ok(Action::Read(ReadStrategy::Buffered {
+                    strat: BufferedReadStrategy::UseRead,
+                    avail: self.read_buffer.avail_to_read_from_pos(pos),
+                }))
             }
             pos if self.read_buffer.contains_position_within_capacity(pos)
-                && pos >= self.read_buffer.end() =>
+                && pos >= self.read_buffer.end_position() =>
             {
-                Ok(Action::Read(ReadStrategy::Fill(self.read_buffer.end())))
+                Ok(Action::Read(ReadStrategy::Fill(
+                    self.read_buffer.end_position(),
+                )))
             }
             _ => Ok(Action::Reanchor(position)),
         } {
@@ -737,7 +738,7 @@ where
             Ok(Action::Read(strat)) => Ok(strat),
             Err(e) => Err(e),
         } {
-            Ok(ReadStrategy::Buffered((strat, avail))) => Ok((strat, avail)),
+            Ok(ReadStrategy::Buffered { strat, avail }) => Ok((strat, avail)),
             Ok(ReadStrategy::Fill(inner_read_pos)) => self
                 .inner
                 .read_at_buf(
@@ -847,7 +848,7 @@ where
             _ => Action::AppendBuffered,
         };
 
-        let append_buffer_end = self.append_buffer.end();
+        let append_buffer_end = self.append_buffer.end_position();
 
         match match match match append_strategy {
             Action::AppendBuffered => (AppendStrategy::Buffered, Ok(())),
@@ -886,5 +887,155 @@ where
 
             Err(error) => Err(error),
         }
+    }
+}
+
+#[allow(unused)]
+pub struct BufferedReaderDirectAppender<R, RB, P, S> {
+    inner: R,
+    read_limit: Option<S>,
+
+    read_buffer: AnchoredBuffer<RB, P>,
+
+    size: S,
+}
+
+impl<R, RB> SizedEntity for BufferedReaderDirectAppender<R, RB, R::Position, R::Size>
+where
+    R: SizedEntity,
+{
+    type Position = R::Position;
+
+    type Size = R::Size;
+
+    fn size(&self) -> Self::Size {
+        self.size
+    }
+}
+
+pub enum BufferedReaderDirectAppenderError<RE, AE> {
+    AppendError(AE),
+    ReadError(RE),
+
+    ReadBufferError(BufferError),
+
+    ReadBeyondWrittenArea,
+
+    InvalidOp,
+}
+
+impl<R, RB> AsyncRead for BufferedReaderDirectAppender<R, RB, R::Position, R::Size>
+where
+    R: AsyncBufRead + AsyncAppend,
+    RB: DerefMut<Target = [u8]>,
+{
+    type ByteBuf<'x> = &'x [u8]
+    where
+        Self: 'x;
+
+    type ReadError = BufferedReaderDirectAppenderError<R::BufReadError, R::AppendError>;
+
+    async fn read_at(
+        &mut self,
+        position: Self::Position,
+        size: Self::Size,
+    ) -> Result<ReadBytes<Self::ByteBuf<'_>, Self::Size>, Self::ReadError> {
+        struct BufferedRead {
+            avail: usize,
+        }
+
+        enum ReadStrategy<P> {
+            Buffered(BufferedRead),
+            Fill(P),
+        }
+
+        enum Action<P> {
+            Read(ReadStrategy<P>),
+            Reanchor(P),
+        }
+
+        match match match match match position {
+            pos if !self.contains(pos) => Err(Self::ReadError::ReadBeyondWrittenArea),
+            pos if self.read_buffer.contains_position(pos) => {
+                Ok(Action::Read(ReadStrategy::Buffered(BufferedRead {
+                    avail: self.read_buffer.avail_to_read_from_pos(pos),
+                })))
+            }
+            pos if self.read_buffer.contains_position_within_capacity(pos)
+                && pos >= self.read_buffer.end_position() =>
+            {
+                Ok(Action::Read(ReadStrategy::Fill(
+                    self.read_buffer.end_position(),
+                )))
+            }
+            _ => Ok(Action::Reanchor(position)),
+        } {
+            Ok(Action::Reanchor(pos)) => {
+                self.read_buffer.re_anchor(pos);
+                Ok(ReadStrategy::Fill(pos))
+            }
+            Ok(Action::Read(strat)) => Ok(strat),
+            Err(e) => Err(e),
+        } {
+            Ok(ReadStrategy::Buffered(buffered_read)) => Ok(buffered_read),
+            Ok(ReadStrategy::Fill(inner_read_pos)) => self
+                .inner
+                .read_at_buf(
+                    inner_read_pos,
+                    min(
+                        self.size().into() - inner_read_pos.into(),
+                        self.read_buffer.avail_to_append(),
+                    )
+                    .into(),
+                    self.read_buffer.get_append_slice_mut(),
+                )
+                .await
+                .map_err(Self::ReadError::ReadError)
+                .and_then(|ReadBytesLen { read_len }| {
+                    self.read_buffer
+                        .advance_end_by(read_len.into())
+                        .map_err(Self::ReadError::ReadBufferError)
+                })
+                .map(|_| BufferedRead {
+                    avail: self.read_buffer.avail_to_read_from_pos(position),
+                }),
+            Err(err) => Err(err),
+        } {
+            Ok(BufferedRead { avail }) => Ok(min(
+                size,
+                min(avail.into(), self.read_limit.unwrap_or(size)),
+            )),
+            Err(error) => Err(error),
+        } {
+            Ok(read_size) => self
+                .read_buffer
+                .read_at(position, read_size)
+                .map_err(Self::ReadError::ReadBufferError),
+            Err(error) => Err(error),
+        }
+        .map(|read_bytes| ReadBytes {
+            read_bytes,
+            read_len: read_bytes.len().into(),
+        })
+    }
+}
+
+impl<R, RB> AsyncAppend for BufferedReaderDirectAppender<R, RB, R::Position, R::Size>
+where
+    R: AsyncBufRead + AsyncAppend,
+{
+    type AppendError = BufferedReaderDirectAppenderError<R::BufReadError, R::AppendError>;
+
+    async fn append(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<AppendLocation<Self::Position, Self::Size>, Self::AppendError> {
+        self.inner
+            .append(bytes)
+            .await
+            .inspect(|append_location| {
+                self.size += append_location.write_len;
+            })
+            .map_err(Self::AppendError::AppendError)
     }
 }
