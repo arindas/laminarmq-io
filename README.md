@@ -48,6 +48,11 @@ pub trait AsyncAppend: SizedEntity {
     ) -> impl Future<Output = Result<AppendLocation<Self::Position, Self::Size>, Self::AppendError>>;
 }
 
+pub struct ReadBytes<T, S> {
+    pub read_bytes: T,
+    pub read_len: S,
+}
+
 pub trait AsyncRead: SizedEntity {
     type ByteBuf<'a>: Deref<Target = [u8]> + 'a
     where
@@ -80,7 +85,7 @@ pub trait AsyncBufRead: SizedEntity {
 On top of these traits, we aim to provide the following abstractions:
 
 - [x] Streaming read / append
-- [ ] Buffered Reader
+- [x] Buffered Reader
 - [ ] Buffered Appender
 - [x] Direct Reader and Buffered Appender
 - [x] Buffered Reader and Direct Appender
