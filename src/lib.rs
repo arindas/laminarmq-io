@@ -520,9 +520,7 @@ where
         }
 
         match match match position {
-            pos if !self.contains(pos) => {
-                Err(DirectReaderBufferedAppenderError::ReadBeyondWrittenArea)
-            }
+            pos if !self.contains(pos) => Err(Self::ReadError::ReadBeyondWrittenArea),
             pos if self.append_buffer.contains_position(pos) => Ok((
                 self.append_buffer.avail_to_read_from_pos(pos),
                 ReadStrategy::Buffered,
@@ -533,7 +531,7 @@ where
                 .checked_sub(&pos)
                 .map(Into::into)
                 .map(|avail| (avail, ReadStrategy::Inner))
-                .ok_or(DirectReaderBufferedAppenderError::ReadBufferGap),
+                .ok_or(Self::ReadError::ReadBufferGap),
         } {
             Ok((0, _)) if size == 0.into() => {
                 return Ok(ReadBytes {
@@ -541,7 +539,7 @@ where
                     read_len: 0.into(),
                 })
             }
-            Ok((0, _)) => Err(DirectReaderBufferedAppenderError::ReadUnderflow),
+            Ok((0, _)) => Err(Self::ReadError::ReadUnderflow),
             Ok((avail, read_strategy)) => Ok((
                 min(size, min(avail.into(), self.read_limit.unwrap_or(size))),
                 read_strategy,
@@ -555,13 +553,13 @@ where
                     read_bytes: DirectReaderBufferedAppenderByteBuf::Buffered(x),
                     read_len: x.len().into(),
                 })
-                .map_err(DirectReaderBufferedAppenderError::AppendBufferError),
+                .map_err(Self::ReadError::AppendBufferError),
             Ok((read_size, ReadStrategy::Inner)) => self
                 .inner
                 .read_at(position, read_size)
                 .await
                 .map(|x| x.map(DirectReaderBufferedAppenderByteBuf::Read))
-                .map_err(DirectReaderBufferedAppenderError::ReadError),
+                .map_err(Self::ReadError::ReadError),
 
             Err(error) => Err(error),
         }
@@ -609,7 +607,7 @@ where
                 None,
                 self.append_buffer
                     .append(bytes)
-                    .map_err(DirectReaderBufferedAppenderError::AppendBufferError)
+                    .map_err(Self::AppendError::AppendBufferError)
                     .map(|x| AppendLocation {
                         write_position: append_buffer_end,
                         write_len: R::Size::from(x),
@@ -620,7 +618,7 @@ where
                 self.inner
                     .append(bytes)
                     .await
-                    .map_err(DirectReaderBufferedAppenderError::AppendError),
+                    .map_err(Self::AppendError::AppendError),
             ),
             (_, Err(error)) => (None, Err(error)),
         } {
@@ -787,5 +785,106 @@ where
             read_bytes,
             read_len: read_bytes.len().into(),
         })
+    }
+}
+
+impl<R, RB, AB> BufferedReaderBufferedAppender<R, RB, AB, R::Position, R::Size>
+where
+    R: AsyncBufRead + AsyncAppend,
+    AB: DerefMut<Target = [u8]>,
+{
+    async fn flush(
+        &mut self,
+    ) -> Result<(), BufferedReaderBufferedAppenderError<R::BufReadError, R::AppendError>> {
+        let buffered_bytes = self
+            .append_buffer
+            .get_read_slice(..)
+            .map_err(BufferedReaderBufferedAppenderError::AppendBufferError)?;
+
+        let AppendLocation {
+            write_position: _,
+            write_len,
+        } = self
+            .inner
+            .append(buffered_bytes)
+            .await
+            .map_err(BufferedReaderBufferedAppenderError::AppendError)?;
+
+        self.append_buffer.advance_anchor_by(write_len);
+
+        Ok(())
+    }
+}
+
+impl<R, RB, AB> AsyncAppend for BufferedReaderBufferedAppender<R, RB, AB, R::Position, R::Size>
+where
+    R: AsyncBufRead + AsyncAppend,
+    AB: DerefMut<Target = [u8]>,
+{
+    type AppendError = BufferedReaderBufferedAppenderError<R::BufReadError, R::AppendError>;
+
+    async fn append(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<AppendLocation<Self::Position, Self::Size>, Self::AppendError> {
+        enum AppendStrategy {
+            Inner,
+            Buffered,
+        }
+
+        enum Action {
+            Flush(AppendStrategy),
+            AppendBuffered,
+        }
+
+        struct AdvanceAnchor;
+
+        let append_strategy = match bytes.len() {
+            n if n >= self.append_buffer.capacity() => Action::Flush(AppendStrategy::Inner),
+            n if n >= self.append_buffer.avail_to_append() => {
+                Action::Flush(AppendStrategy::Buffered)
+            }
+            _ => Action::AppendBuffered,
+        };
+
+        let append_buffer_end = self.append_buffer.end();
+
+        match match match match append_strategy {
+            Action::AppendBuffered => (AppendStrategy::Buffered, Ok(())),
+            Action::Flush(strat) => (strat, self.flush().await),
+        } {
+            (AppendStrategy::Buffered, Ok(_)) => (
+                None,
+                self.append_buffer
+                    .append(bytes)
+                    .map_err(Self::AppendError::AppendBufferError)
+                    .map(|x| AppendLocation {
+                        write_position: append_buffer_end,
+                        write_len: R::Size::from(x),
+                    }),
+            ),
+            (AppendStrategy::Inner, Ok(_)) => (
+                Some(AdvanceAnchor),
+                self.inner
+                    .append(bytes)
+                    .await
+                    .map_err(Self::AppendError::AppendError),
+            ),
+            (_, Err(error)) => (None, Err(error)),
+        } {
+            (Some(AdvanceAnchor), Ok(append_location)) => {
+                self.append_buffer
+                    .advance_anchor_by(append_location.write_len);
+                Ok(append_location)
+            }
+            (_, result) => result,
+        } {
+            Ok(append_location) => {
+                self.size += append_location.write_len;
+                Ok(append_location)
+            }
+
+            Err(error) => Err(error),
+        }
     }
 }
