@@ -1,15 +1,15 @@
-# laminarmq-storage
+# laminarmq-io
 
-An attempt to rewrite [`laminarmq`](https://github.com/arindas/laminarmq) storage layer
+An attempt to rewrite [`laminarmq`](https://github.com/arindas/laminarmq) I/O layer
 to acommodate capped/bounded memory overhead, both when reading and writing.
 
 ## Usage
 
-`laminarmq-storage` is a library crate. In order to use it, add the following to your `Cargo.toml`
+`laminarmq-io` is a library crate. In order to use it, add the following to your `Cargo.toml`
 
 ```toml
 [dependencies]
-laminarmq-storage = { git = "https://github.com/arindas/laminarmq-storage.git" }
+laminarmq-io = { git = "https://github.com/arindas/laminarmq-io.git" }
 ```
 
 ## Overview
