@@ -6,7 +6,7 @@ use std::{
 };
 
 use futures::{Stream, StreamExt};
-use num::{CheckedSub, Unsigned};
+use num::{zero, CheckedSub, Unsigned, Zero};
 
 pub trait Quantifier:
     Add<Output = Self>
@@ -17,6 +17,7 @@ pub trait Quantifier:
     + From<usize>
     + Into<usize>
     + Unsigned
+    + Zero
     + CheckedSub
     + Clone
     + Copy
@@ -84,7 +85,7 @@ where
     {
         let file = self.0;
 
-        let (mut bytes_written, write_position) = (0.into(), file.size().into());
+        let (mut bytes_written, write_position) = (zero(), file.size().into());
 
         while let Some(buf) = stream.next().await {
             match match match (buf, append_stream_threshold) {
@@ -204,7 +205,7 @@ where
     type Error = R::ReadError;
 
     async fn next(&mut self) -> Option<Result<Self::ByteBuf<'_>, Self::Error>> {
-        if self.bytes_remaining == 0.into() {
+        if self.bytes_remaining == zero() {
             return None;
         }
 
@@ -532,10 +533,10 @@ where
                 .map(|avail| (avail, ReadStrategy::Inner))
                 .ok_or(Self::ReadError::ReadBufferGap),
         } {
-            Ok((0, _)) if size == 0.into() => {
+            Ok((0, _)) if size == zero() => {
                 return Ok(ReadBytes {
                     read_bytes: DirectReaderBufferedAppenderByteBuf::Buffered(&[]),
-                    read_len: 0.into(),
+                    read_len: zero(),
                 })
             }
             Ok((0, _)) => Err(Self::ReadError::ReadUnderflow),
