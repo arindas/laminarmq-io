@@ -6,7 +6,7 @@ use std::{
 };
 
 use futures::{Stream, StreamExt};
-use num::{zero, CheckedSub, Unsigned, Zero};
+use num::{zero, CheckedSub, FromPrimitive, ToPrimitive, Unsigned, Zero};
 
 pub trait Quantifier:
     Add<Output = Self>
@@ -14,8 +14,8 @@ pub trait Quantifier:
     + AddAssign
     + SubAssign
     + Ord
-    + From<usize>
-    + Into<usize>
+    + FromPrimitive
+    + ToPrimitive
     + Unsigned
     + Zero
     + CheckedSub
@@ -26,7 +26,7 @@ pub trait Quantifier:
 
 pub trait SizedEntity {
     type Position: Quantifier + From<Self::Size>;
-    type Size: Quantifier;
+    type Size: Quantifier + From<Self::Position>;
 
     fn size(&self) -> Self::Size;
 
@@ -63,6 +63,7 @@ pub enum AsyncStreamAppendError<AE, TE> {
     StreamReadError,
     TruncateError(TE),
     AppendError(AE),
+    IntegerConversionError,
 }
 
 pub struct AsyncStreamAppend<'a, A>(&'a mut A);
@@ -89,7 +90,14 @@ where
 
         while let Some(buf) = stream.next().await {
             match match match (buf, append_stream_threshold) {
-                (Ok(buf), Some(thresh)) if (bytes_written + buf.len().into()) <= thresh => Ok(buf),
+                (Ok(buf), Some(thresh))
+                    if (bytes_written
+                        + A::Size::from_usize(buf.len())
+                            .ok_or(AsyncStreamAppendError::IntegerConversionError)?)
+                        <= thresh =>
+                {
+                    Ok(buf)
+                }
                 (Ok(_), Some(_)) => Err(AsyncStreamAppendError::AppendOverflow),
                 (Ok(buf), None) => Ok(buf),
                 (Err(_), _) => Err(AsyncStreamAppendError::StreamReadError),
@@ -107,7 +115,7 @@ where
 
                 Err(error) => {
                     return file
-                        .truncate(write_position.into())
+                        .truncate(write_position)
                         .await
                         .map_err(AsyncStreamAppendError::TruncateError)
                         .and_then(|_| Err(error))
@@ -116,7 +124,7 @@ where
         }
 
         Ok(AppendLocation {
-            write_position: write_position.into(),
+            write_position,
             write_len: bytes_written,
         })
     }
@@ -252,6 +260,7 @@ pub enum BufferError {
     IndexOutOfBounds,
     BadSliceRange,
     BufferOverflow,
+    IntegerConversionError,
 }
 
 impl<T, X> Buffer<T>
@@ -379,7 +388,7 @@ where
     pub fn offset(&self, position: P) -> Option<usize> {
         position
             .checked_sub(&self.anchor_position())
-            .map(Into::into)
+            .and_then(|x| P::to_usize(&x))
     }
 
     pub fn read_at<S>(&self, position: P, size: S) -> Result<&[u8], BufferError>
@@ -387,13 +396,15 @@ where
         S: Quantifier,
     {
         let start = self.offset(position).ok_or(BufferError::IndexOutOfBounds)?;
-        let end = start + size.into();
+        let end = start + size.to_usize().ok_or(BufferError::IntegerConversionError)?;
 
         self.get_read_slice(start..end)
     }
 
-    pub fn end_position(&self) -> P {
-        self.anchor_position() + P::from(self.len())
+    pub fn end_position(&self) -> Result<P, BufferError> {
+        P::from_usize(self.len())
+            .map(|buf_len| self.anchor_position() + buf_len)
+            .ok_or(BufferError::IntegerConversionError)
     }
 
     pub fn avail_to_read_from_pos(&self, position: P) -> usize {
@@ -435,6 +446,8 @@ pub enum DirectReaderBufferedAppenderError<RE, AE> {
     ReadBufferGap,
     ReadUnderflow,
     AppendBufferError(BufferError),
+
+    IntegerConversionError,
 }
 
 #[allow(unused)]
@@ -529,7 +542,7 @@ where
                 .append_buffer
                 .anchor_position()
                 .checked_sub(&pos)
-                .map(Into::into)
+                .and_then(|x| R::Position::to_usize(&x))
                 .map(|avail| (avail, ReadStrategy::Inner))
                 .ok_or(Self::ReadError::ReadBufferGap),
         } {
@@ -541,7 +554,14 @@ where
             }
             Ok((0, _)) => Err(Self::ReadError::ReadUnderflow),
             Ok((avail, read_strategy)) => Ok((
-                min(size, min(avail.into(), self.read_limit.unwrap_or(size))),
+                min(
+                    size,
+                    min(
+                        R::Size::from_usize(avail)
+                            .ok_or(Self::ReadError::IntegerConversionError)?,
+                        self.read_limit.unwrap_or(size),
+                    ),
+                ),
                 read_strategy,
             )),
             Err(error) => Err(error),
@@ -549,9 +569,12 @@ where
             Ok((read_size, ReadStrategy::Buffered)) => self
                 .append_buffer
                 .read_at(position, read_size)
-                .map(|x| ReadBytes {
-                    read_bytes: DirectReaderBufferedAppenderByteBuf::Buffered(x),
-                    read_len: x.len().into(),
+                .and_then(|x| {
+                    Ok(ReadBytes {
+                        read_bytes: DirectReaderBufferedAppenderByteBuf::Buffered(x),
+                        read_len: R::Size::from_usize(x.len())
+                            .ok_or(BufferError::IntegerConversionError)?,
+                    })
                 })
                 .map_err(Self::ReadError::AppendBufferError),
             Ok((read_size, ReadStrategy::Inner)) => self
@@ -597,7 +620,10 @@ where
             _ => Action::AppendBuffered,
         };
 
-        let append_buffer_end = self.append_buffer.end_position();
+        let append_buffer_end = self
+            .append_buffer
+            .end_position()
+            .map_err(Self::AppendError::AppendBufferError)?;
 
         match match match match append_strategy {
             Action::AppendBuffered => (AppendStrategy::Buffered, Ok(())),
@@ -607,11 +633,14 @@ where
                 None,
                 self.append_buffer
                     .append(bytes)
-                    .map_err(Self::AppendError::AppendBufferError)
-                    .map(|x| AppendLocation {
-                        write_position: append_buffer_end,
-                        write_len: R::Size::from(x),
-                    }),
+                    .and_then(|x| {
+                        Ok(AppendLocation {
+                            write_position: append_buffer_end,
+                            write_len: R::Size::from_usize(x)
+                                .ok_or(BufferError::IntegerConversionError)?,
+                        })
+                    })
+                    .map_err(Self::AppendError::AppendBufferError),
             ),
             (AppendStrategy::Inner, Ok(_)) => (
                 Some(AdvanceAnchor),
@@ -671,6 +700,8 @@ pub enum BufferedReaderBufferedAppenderError<RE, AE> {
     ReadBufferError(BufferError),
 
     ReadBeyondWrittenArea,
+
+    IntegerConversionError,
 }
 
 impl<R, RB, AB> AsyncRead for BufferedReaderBufferedAppender<R, RB, AB, R::Position, R::Size>
@@ -723,10 +754,16 @@ where
                 }))
             }
             pos if self.read_buffer.contains_position_within_capacity(pos)
-                && pos >= self.read_buffer.end_position() =>
+                && pos
+                    >= self
+                        .read_buffer
+                        .end_position()
+                        .map_err(Self::ReadError::ReadBufferError)? =>
             {
                 Ok(Action::Read(ReadStrategy::Fill(
-                    self.read_buffer.end_position(),
+                    self.read_buffer
+                        .end_position()
+                        .map_err(Self::ReadError::ReadBufferError)?,
                 )))
             }
             _ => Ok(Action::Reanchor(position)),
@@ -744,10 +781,9 @@ where
                 .read_at_buf(
                     inner_read_pos,
                     min(
-                        (self.append_buffer.anchor_position() - inner_read_pos)
-                            .into()
-                            .into(),
-                        self.read_buffer.avail_to_append().into(),
+                        R::Size::from(self.append_buffer.anchor_position() - inner_read_pos),
+                        R::Size::from_usize(self.read_buffer.avail_to_append())
+                            .ok_or(Self::ReadError::IntegerConversionError)?,
                     ),
                     self.read_buffer.get_append_slice_mut(),
                 )
@@ -755,7 +791,11 @@ where
                 .map_err(Self::ReadError::ReadError)
                 .and_then(|ReadBytesLen { read_len }| {
                     self.read_buffer
-                        .advance_end_by(read_len.into())
+                        .advance_end_by(
+                            read_len
+                                .to_usize()
+                                .ok_or(Self::ReadError::IntegerConversionError)?,
+                        )
                         .map_err(Self::ReadError::ReadBufferError)
                 })
                 .map(|_| {
@@ -768,7 +808,14 @@ where
         } {
             Ok((strat, avail)) => Ok((
                 strat,
-                min(size, min(avail.into(), self.read_limit.unwrap_or(size))),
+                min(
+                    size,
+                    min(
+                        R::Size::from_usize(avail)
+                            .ok_or(Self::ReadError::IntegerConversionError)?,
+                        self.read_limit.unwrap_or(size),
+                    ),
+                ),
             )),
             Err(error) => Err(error),
         } {
@@ -782,9 +829,12 @@ where
                 .map_err(Self::ReadError::ReadBufferError),
             Err(error) => Err(error),
         }
-        .map(|read_bytes| ReadBytes {
-            read_bytes,
-            read_len: read_bytes.len().into(),
+        .and_then(|read_bytes| {
+            Ok(ReadBytes {
+                read_bytes,
+                read_len: R::Size::from_usize(read_bytes.len())
+                    .ok_or(Self::ReadError::IntegerConversionError)?,
+            })
         })
     }
 }
@@ -848,7 +898,10 @@ where
             _ => Action::AppendBuffered,
         };
 
-        let append_buffer_end = self.append_buffer.end_position();
+        let append_buffer_end = self
+            .append_buffer
+            .end_position()
+            .map_err(Self::AppendError::AppendBufferError)?;
 
         match match match match append_strategy {
             Action::AppendBuffered => (AppendStrategy::Buffered, Ok(())),
@@ -858,11 +911,14 @@ where
                 None,
                 self.append_buffer
                     .append(bytes)
-                    .map_err(Self::AppendError::AppendBufferError)
-                    .map(|x| AppendLocation {
-                        write_position: append_buffer_end,
-                        write_len: R::Size::from(x),
-                    }),
+                    .and_then(|x| {
+                        Ok(AppendLocation {
+                            write_position: append_buffer_end,
+                            write_len: R::Size::from_usize(x)
+                                .ok_or(BufferError::IntegerConversionError)?,
+                        })
+                    })
+                    .map_err(Self::AppendError::AppendBufferError),
             ),
             (AppendStrategy::Inner, Ok(_)) => (
                 Some(AdvanceAnchor),
@@ -920,6 +976,8 @@ pub enum BufferedReaderDirectAppenderError<RE, AE> {
     ReadBufferError(BufferError),
 
     ReadBeyondWrittenArea,
+
+    IntegerConversionError,
 }
 
 impl<R, RB> AsyncRead for BufferedReaderDirectAppender<R, RB, R::Position, R::Size>
@@ -960,10 +1018,16 @@ where
                 })))
             }
             pos if self.read_buffer.contains_position_within_capacity(pos)
-                && pos >= self.read_buffer.end_position() =>
+                && pos
+                    >= self
+                        .read_buffer
+                        .end_position()
+                        .map_err(Self::ReadError::ReadBufferError)? =>
             {
                 Ok(Action::Read(ReadStrategy::Fill(
-                    self.read_buffer.end_position(),
+                    self.read_buffer
+                        .end_position()
+                        .map_err(Self::ReadError::ReadBufferError)?,
                 )))
             }
             _ => Ok(Action::Reanchor(position)),
@@ -981,17 +1045,21 @@ where
                 .read_at_buf(
                     inner_read_pos,
                     min(
-                        self.size().into() - inner_read_pos.into(),
-                        self.read_buffer.avail_to_append(),
-                    )
-                    .into(),
+                        self.size() - R::Size::from(inner_read_pos),
+                        R::Size::from_usize(self.read_buffer.avail_to_append())
+                            .ok_or(Self::ReadError::IntegerConversionError)?,
+                    ),
                     self.read_buffer.get_append_slice_mut(),
                 )
                 .await
                 .map_err(Self::ReadError::ReadError)
                 .and_then(|ReadBytesLen { read_len }| {
                     self.read_buffer
-                        .advance_end_by(read_len.into())
+                        .advance_end_by(
+                            read_len
+                                .to_usize()
+                                .ok_or(Self::ReadError::IntegerConversionError)?,
+                        )
                         .map_err(Self::ReadError::ReadBufferError)
                 })
                 .map(|_| BufferedRead {
@@ -1001,7 +1069,10 @@ where
         } {
             Ok(BufferedRead { avail }) => Ok(min(
                 size,
-                min(avail.into(), self.read_limit.unwrap_or(size)),
+                min(
+                    R::Size::from_usize(avail).ok_or(Self::ReadError::IntegerConversionError)?,
+                    self.read_limit.unwrap_or(size),
+                ),
             )),
             Err(error) => Err(error),
         } {
@@ -1011,9 +1082,12 @@ where
                 .map_err(Self::ReadError::ReadBufferError),
             Err(error) => Err(error),
         }
-        .map(|read_bytes| ReadBytes {
-            read_bytes,
-            read_len: read_bytes.len().into(),
+        .and_then(|read_bytes| {
+            Ok(ReadBytes {
+                read_bytes,
+                read_len: R::Size::from_usize(read_bytes.len())
+                    .ok_or(Self::ReadError::IntegerConversionError)?,
+            })
         })
     }
 }
@@ -1052,6 +1126,8 @@ pub enum BufferedReaderError<RE> {
     ReadBufferError(BufferError),
 
     ReadBeyondWrittenArea,
+
+    IntegerConversionError,
 }
 
 impl<R, RB> SizedEntity for BufferedReader<R, RB, R::Position, R::Size>
@@ -1105,10 +1181,16 @@ where
                 })))
             }
             pos if self.read_buffer.contains_position_within_capacity(pos)
-                && pos >= self.read_buffer.end_position() =>
+                && pos
+                    >= self
+                        .read_buffer
+                        .end_position()
+                        .map_err(Self::ReadError::ReadBufferError)? =>
             {
                 Ok(Action::Read(ReadStrategy::Fill(
-                    self.read_buffer.end_position(),
+                    self.read_buffer
+                        .end_position()
+                        .map_err(Self::ReadError::ReadBufferError)?,
                 )))
             }
             _ => Ok(Action::Reanchor(position)),
@@ -1126,17 +1208,21 @@ where
                 .read_at_buf(
                     inner_read_pos,
                     min(
-                        self.size().into() - inner_read_pos.into(),
-                        self.read_buffer.avail_to_append(),
-                    )
-                    .into(),
+                        self.size() - R::Size::from(inner_read_pos),
+                        R::Size::from_usize(self.read_buffer.avail_to_append())
+                            .ok_or(Self::ReadError::IntegerConversionError)?,
+                    ),
                     self.read_buffer.get_append_slice_mut(),
                 )
                 .await
                 .map_err(Self::ReadError::ReadError)
                 .and_then(|ReadBytesLen { read_len }| {
                     self.read_buffer
-                        .advance_end_by(read_len.into())
+                        .advance_end_by(
+                            read_len
+                                .to_usize()
+                                .ok_or(Self::ReadError::IntegerConversionError)?,
+                        )
                         .map_err(Self::ReadError::ReadBufferError)
                 })
                 .map(|_| BufferedRead {
@@ -1146,7 +1232,10 @@ where
         } {
             Ok(BufferedRead { avail }) => Ok(min(
                 size,
-                min(avail.into(), self.read_limit.unwrap_or(size)),
+                min(
+                    R::Size::from_usize(avail).ok_or(Self::ReadError::IntegerConversionError)?,
+                    self.read_limit.unwrap_or(size),
+                ),
             )),
             Err(error) => Err(error),
         } {
@@ -1156,9 +1245,12 @@ where
                 .map_err(Self::ReadError::ReadBufferError),
             Err(error) => Err(error),
         }
-        .map(|read_bytes| ReadBytes {
-            read_bytes,
-            read_len: read_bytes.len().into(),
+        .and_then(|read_bytes| {
+            Ok(ReadBytes {
+                read_bytes,
+                read_len: R::Size::from_usize(read_bytes.len())
+                    .ok_or(Self::ReadError::IntegerConversionError)?,
+            })
         })
     }
 }
@@ -1248,7 +1340,10 @@ where
             _ => Action::AppendBuffered,
         };
 
-        let append_buffer_end = self.append_buffer.end_position();
+        let append_buffer_end = self
+            .append_buffer
+            .end_position()
+            .map_err(Self::AppendError::AppendBufferError)?;
 
         match match match match append_strategy {
             Action::AppendBuffered => (AppendStrategy::Buffered, Ok(())),
@@ -1258,11 +1353,14 @@ where
                 None,
                 self.append_buffer
                     .append(bytes)
-                    .map_err(Self::AppendError::AppendBufferError)
-                    .map(|x| AppendLocation {
-                        write_position: append_buffer_end,
-                        write_len: R::Size::from(x),
-                    }),
+                    .and_then(|x| {
+                        Ok(AppendLocation {
+                            write_position: append_buffer_end,
+                            write_len: R::Size::from_usize(x)
+                                .ok_or(BufferError::IntegerConversionError)?,
+                        })
+                    })
+                    .map_err(Self::AppendError::AppendBufferError),
             ),
             (AppendStrategy::Inner, Ok(_)) => (
                 Some(AdvanceAnchor),
