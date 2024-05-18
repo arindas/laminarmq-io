@@ -3,7 +3,6 @@ use std::{
     convert::Into,
     future::Future,
     ops::{Add, AddAssign, Bound, Deref, DerefMut, RangeBounds, Sub, SubAssign},
-    usize,
 };
 
 use futures::{Stream, StreamExt};
@@ -26,7 +25,7 @@ pub trait Quantifier:
 
 pub trait SizedEntity {
     type Position: Quantifier + From<Self::Size>;
-    type Size: Quantifier + From<Self::Position>;
+    type Size: Quantifier;
 
     fn size(&self) -> Self::Size;
 
