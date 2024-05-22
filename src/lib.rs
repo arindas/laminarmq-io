@@ -24,6 +24,24 @@ pub trait Quantifier:
 {
 }
 
+impl<T> Quantifier for T where
+    T: Add<Output = Self>
+        + Sub
+        + AddAssign
+        + SubAssign
+        + Ord
+        + FromPrimitive
+        + ToPrimitive
+        + Unsigned
+        + Zero
+        + CheckedSub
+        + Clone
+        + Copy
+{
+}
+
+pub struct IntegerConversionError;
+
 pub trait SizedEntity {
     type Position: Quantifier + From<Self::Size>;
     type Size: Quantifier + From<Self::Position>;
@@ -166,14 +184,30 @@ pub struct ReadBytesLen<T> {
 }
 
 pub trait AsyncBufRead: SizedEntity {
-    type BufReadError;
+    type BufReadError: From<IntegerConversionError>;
 
     fn read_at_buf(
         &mut self,
         position: Self::Position,
-        size: Self::Size,
         buffer: &mut [u8],
     ) -> impl Future<Output = Result<ReadBytesLen<Self::Size>, Self::BufReadError>>;
+
+    fn read_at_buf_sized(
+        &mut self,
+        position: Self::Position,
+        size: Self::Size,
+        buffer: &mut [u8],
+    ) -> impl Future<Output = Result<ReadBytesLen<Self::Size>, Self::BufReadError>> {
+        async move {
+            let size = size
+                .to_usize()
+                .map(|size| min(size, buffer.len()))
+                .ok_or(IntegerConversionError)
+                .map_err(Into::into)?;
+
+            self.read_at_buf(position, &mut buffer[..size]).await
+        }
+    }
 }
 
 pub trait ByteBufStream {
@@ -778,7 +812,7 @@ where
             Ok(ReadStrategy::Buffered { strat, avail }) => Ok((strat, avail)),
             Ok(ReadStrategy::Fill(inner_read_pos)) => self
                 .inner
-                .read_at_buf(
+                .read_at_buf_sized(
                     inner_read_pos,
                     min(
                         R::Size::from(self.append_buffer.anchor_position() - inner_read_pos),
@@ -1042,7 +1076,7 @@ where
             Ok(ReadStrategy::Buffered(buffered_read)) => Ok(buffered_read),
             Ok(ReadStrategy::Fill(inner_read_pos)) => self
                 .inner
-                .read_at_buf(
+                .read_at_buf_sized(
                     inner_read_pos,
                     min(
                         self.size() - R::Size::from(inner_read_pos),
@@ -1205,7 +1239,7 @@ where
             Ok(ReadStrategy::Buffered(buffered_read)) => Ok(buffered_read),
             Ok(ReadStrategy::Fill(inner_read_pos)) => self
                 .inner
-                .read_at_buf(
+                .read_at_buf_sized(
                     inner_read_pos,
                     min(
                         self.size() - R::Size::from(inner_read_pos),
@@ -1387,3 +1421,5 @@ where
         }
     }
 }
+
+pub mod fs;
