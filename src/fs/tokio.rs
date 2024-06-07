@@ -1,14 +1,13 @@
-use std::io;
-
 use num::ToPrimitive;
+use std::io;
 use tokio::{
     fs::File as TokioFile,
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
 };
 
 use crate::{
-    AppendLocation, AsyncAppend, AsyncBufRead, AsyncTruncate, IntegerConversionError, ReadBytesLen,
-    SizedEntity,
+    AppendLocation, AsyncAppend, AsyncBufRead, AsyncTruncate, FallibleEntity,
+    IntegerConversionError, ReadBytesLen, SizedEntity,
 };
 
 #[allow(unused)]
@@ -35,19 +34,24 @@ pub enum TokioFileError {
     IntegerConversionError,
 }
 
-impl AsyncTruncate for File {
-    type TruncateError = TokioFileError;
+impl From<IntegerConversionError> for TokioFileError {
+    fn from(_: IntegerConversionError) -> Self {
+        Self::IntegerConversionError
+    }
+}
 
-    async fn truncate(&mut self, position: Self::Position) -> Result<(), Self::TruncateError> {
-        self.inner
-            .flush()
-            .await
-            .map_err(Self::TruncateError::IoError)?;
+impl FallibleEntity for File {
+    type Error = TokioFileError;
+}
+
+impl AsyncTruncate for File {
+    async fn truncate(&mut self, position: Self::Position) -> Result<(), Self::Error> {
+        self.inner.flush().await.map_err(Self::Error::IoError)?;
 
         self.inner
             .set_len(position)
             .await
-            .map_err(Self::TruncateError::IoError)?;
+            .map_err(Self::Error::IoError)?;
 
         self.size = position;
 
@@ -56,26 +60,21 @@ impl AsyncTruncate for File {
 }
 
 impl AsyncAppend for File {
-    type AppendError = TokioFileError;
-
     async fn append(
         &mut self,
         bytes: &[u8],
-    ) -> Result<AppendLocation<Self::Position, Self::Size>, Self::AppendError> {
+    ) -> Result<AppendLocation<Self::Position, Self::Size>, Self::Error> {
         let write_position = self.size();
 
         let write_len = self
             .inner
             .write(bytes)
             .await
-            .map_err(Self::AppendError::IoError)?
+            .map_err(Self::Error::IoError)?
             .to_u64()
-            .ok_or(Self::AppendError::IntegerConversionError)?;
+            .ok_or(Self::Error::IntegerConversionError)?;
 
-        self.inner
-            .flush()
-            .await
-            .map_err(Self::AppendError::IoError)?;
+        self.inner.flush().await.map_err(Self::Error::IoError)?;
 
         self.size += write_len;
 
@@ -86,37 +85,29 @@ impl AsyncAppend for File {
     }
 }
 
-impl From<IntegerConversionError> for TokioFileError {
-    fn from(_: IntegerConversionError) -> Self {
-        TokioFileError::IntegerConversionError
-    }
-}
-
 impl AsyncBufRead for File {
-    type BufReadError = TokioFileError;
-
     async fn read_at_buf(
         &mut self,
         position: Self::Position,
         buffer: &mut [u8],
-    ) -> Result<ReadBytesLen<Self::Size>, Self::BufReadError> {
+    ) -> Result<ReadBytesLen<Self::Size>, Self::Error> {
         self.inner
             .seek(io::SeekFrom::Start(position))
             .await
-            .map_err(Self::BufReadError::IoError)?;
+            .map_err(Self::Error::IoError)?;
 
         let read_len = self
             .inner
             .read(buffer)
             .await
-            .map_err(Self::BufReadError::IoError)?
+            .map_err(Self::Error::IoError)?
             .to_u64()
-            .ok_or(Self::BufReadError::IntegerConversionError)?;
+            .ok_or(Self::Error::IntegerConversionError)?;
 
         self.inner
             .seek(io::SeekFrom::Start(self.size))
             .await
-            .map_err(Self::BufReadError::IoError)?;
+            .map_err(Self::Error::IoError)?;
 
         Ok(ReadBytesLen { read_len })
     }
