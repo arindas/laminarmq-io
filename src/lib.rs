@@ -5,7 +5,7 @@ use std::{
     ops::{Add, AddAssign, Bound, Deref, DerefMut, RangeBounds, Sub, SubAssign},
 };
 
-use futures::{Stream, StreamExt};
+use futures::{Stream, StreamExt, TryFutureExt};
 use num::{zero, CheckedSub, FromPrimitive, ToPrimitive, Unsigned, Zero};
 
 pub trait Quantifier:
@@ -67,6 +67,14 @@ pub trait AsyncTruncate: SizedEntity + FallibleEntity {
         &mut self,
         position: Self::Position,
     ) -> impl Future<Output = Result<(), Self::Error>>;
+}
+
+pub trait AsyncRemove: FallibleEntity {
+    fn remove(self) -> impl Future<Output = Result<(), Self::Error>>;
+}
+
+pub trait AsyncClose: FallibleEntity {
+    fn close(self) -> impl Future<Output = Result<(), Self::Error>>;
 }
 
 pub trait AsyncAppend: SizedEntity + FallibleEntity {
@@ -203,18 +211,16 @@ pub trait AsyncRead: SizedEntity + FallibleEntity {
     ) -> impl Future<Output = Result<ReadBytes<Self::ByteBuf<'_>, Self::Size>, Self::Error>>;
 }
 
-pub trait ByteBufStream {
-    type ByteBuf<'a>: Deref<Target = [u8]> + 'a
+pub trait StreamX {
+    type Item<'a>
     where
         Self: 'a;
 
-    type Error;
-
-    fn next(&mut self) -> impl Future<Output = Option<Result<Self::ByteBuf<'_>, Self::Error>>>;
+    fn next(&mut self) -> impl Future<Output = Option<Self::Item<'_>>>;
 }
 
-pub trait StreamRead: SizedEntity {
-    type Stream<'a>: ByteBufStream + 'a
+pub trait StreamRead: AsyncRead {
+    type Stream<'a>: StreamX<Item<'a> = Result<Self::ByteBuf<'a>, Self::Error>>
     where
         Self: 'a;
 
@@ -229,17 +235,15 @@ pub struct AsyncReadByteBufStream<'a, R, P, S> {
     bytes_remaining: S,
 }
 
-impl<'a, R> ByteBufStream for AsyncReadByteBufStream<'a, R, R::Position, R::Size>
+impl<'a, R> StreamX for AsyncReadByteBufStream<'a, R, R::Position, R::Size>
 where
     R: AsyncRead,
 {
-    type ByteBuf<'x> = R::ByteBuf<'x>
+    type Item<'x> = Result<R::ByteBuf<'x>, R::Error>
     where
         Self: 'x;
 
-    type Error = R::Error;
-
-    async fn next(&mut self) -> Option<Result<Self::ByteBuf<'_>, Self::Error>> {
+    async fn next(&mut self) -> Option<Self::Item<'_>> {
         if self.bytes_remaining == zero() {
             return None;
         }
@@ -469,6 +473,7 @@ pub struct DirectReaderBufferedAppender<R, AB, P, S> {
 pub enum DirectReaderBufferedAppenderError<E> {
     ReadError(E),
     AppendError(E),
+    RemoveError(E),
     ReadBeyondWrittenArea,
     ReadBufferGap,
     ReadUnderflow,
@@ -507,6 +512,27 @@ where
         self.append_buffer.advance_anchor_by(write_len);
 
         Ok(())
+    }
+}
+
+impl<R, AB, P, S> AsyncRemove for DirectReaderBufferedAppender<R, AB, P, S>
+where
+    R: AsyncRemove,
+{
+    fn remove(self) -> impl Future<Output = Result<(), Self::Error>> {
+        self.inner.remove().map_err(Self::Error::RemoveError)
+    }
+}
+
+impl<R, AB> AsyncClose for DirectReaderBufferedAppender<R, AB, R::Position, R::Size>
+where
+    R: AsyncClose + AsyncAppend,
+    AB: DerefMut<Target = [u8]>,
+{
+    async fn close(mut self) -> Result<(), Self::Error> {
+        self.flush().await?;
+
+        self.inner.close().await.map_err(Self::Error::RemoveError)
     }
 }
 
@@ -728,6 +754,7 @@ where
 pub enum BufferedReaderBufferedAppenderError<E> {
     AppendError(E),
     ReadError(E),
+    RemoveError(E),
 
     AppendBufferError(BufferError),
     ReadBufferError(BufferError),
@@ -905,6 +932,27 @@ where
         self.append_buffer.advance_anchor_by(write_len);
 
         Ok(())
+    }
+}
+
+impl<R, RB, AB, P, S> AsyncRemove for BufferedReaderBufferedAppender<R, RB, AB, P, S>
+where
+    R: AsyncRemove,
+{
+    fn remove(self) -> impl Future<Output = Result<(), Self::Error>> {
+        self.inner.remove().map_err(Self::Error::RemoveError)
+    }
+}
+
+impl<R, RB, AB> AsyncClose for BufferedReaderBufferedAppender<R, RB, AB, R::Position, R::Size>
+where
+    R: AsyncClose + AsyncAppend,
+    AB: DerefMut<Target = [u8]>,
+{
+    async fn close(mut self) -> Result<(), Self::Error> {
+        self.flush().await?;
+
+        self.inner.close().await.map_err(Self::Error::RemoveError)
     }
 }
 
@@ -1325,6 +1373,7 @@ pub struct BufferedAppender<R, AB, P, S> {
 
 pub enum BufferedAppenderError<AE> {
     AppendError(AE),
+    RemoveError(AE),
     AppendBufferError(BufferError),
 
     IntegerConversionError,
@@ -1380,6 +1429,27 @@ where
         self.append_buffer.advance_anchor_by(write_len);
 
         Ok(())
+    }
+}
+
+impl<R, AB, P, S> AsyncRemove for BufferedAppender<R, AB, P, S>
+where
+    R: AsyncRemove,
+{
+    fn remove(self) -> impl Future<Output = Result<(), Self::Error>> {
+        self.inner.remove().map_err(Self::Error::RemoveError)
+    }
+}
+
+impl<R, AB> AsyncClose for BufferedAppender<R, AB, R::Position, R::Size>
+where
+    R: AsyncClose + AsyncAppend,
+    AB: DerefMut<Target = [u8]>,
+{
+    async fn close(mut self) -> Result<(), Self::Error> {
+        self.flush().await?;
+
+        self.inner.close().await.map_err(Self::Error::RemoveError)
     }
 }
 
