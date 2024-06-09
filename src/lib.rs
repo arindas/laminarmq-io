@@ -203,18 +203,16 @@ pub trait AsyncRead: SizedEntity + FallibleEntity {
     ) -> impl Future<Output = Result<ReadBytes<Self::ByteBuf<'_>, Self::Size>, Self::Error>>;
 }
 
-pub trait ByteBufStream {
-    type ByteBuf<'a>: Deref<Target = [u8]> + 'a
+pub trait StreamX {
+    type Item<'a>
     where
         Self: 'a;
 
-    type Error;
-
-    fn next(&mut self) -> impl Future<Output = Option<Result<Self::ByteBuf<'_>, Self::Error>>>;
+    fn next(&mut self) -> impl Future<Output = Option<Self::Item<'_>>>;
 }
 
-pub trait StreamRead: SizedEntity {
-    type Stream<'a>: ByteBufStream + 'a
+pub trait StreamRead: AsyncRead {
+    type Stream<'a>: StreamX<Item<'a> = Result<Self::ByteBuf<'a>, Self::Error>>
     where
         Self: 'a;
 
@@ -229,17 +227,15 @@ pub struct AsyncReadByteBufStream<'a, R, P, S> {
     bytes_remaining: S,
 }
 
-impl<'a, R> ByteBufStream for AsyncReadByteBufStream<'a, R, R::Position, R::Size>
+impl<'a, R> StreamX for AsyncReadByteBufStream<'a, R, R::Position, R::Size>
 where
     R: AsyncRead,
 {
-    type ByteBuf<'x> = R::ByteBuf<'x>
+    type Item<'x> = Result<R::ByteBuf<'x>, R::Error>
     where
         Self: 'x;
 
-    type Error = R::Error;
-
-    async fn next(&mut self) -> Option<Result<Self::ByteBuf<'_>, Self::Error>> {
+    async fn next(&mut self) -> Option<Self::Item<'_>> {
         if self.bytes_remaining == zero() {
             return None;
         }
