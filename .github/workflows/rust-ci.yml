@@ -1,0 +1,39 @@
+name: rust-ci
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "src/**"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "src/**"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: cargo build --verbose
+
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run tests
+        run: cargo test --verbose
+
+  clippy-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clippy Check
+        run: cargo clippy --all-features
