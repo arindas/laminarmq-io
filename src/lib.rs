@@ -227,7 +227,6 @@ pub trait StreamRead: AsyncRead {
     fn read_stream_at(&mut self, position: Self::Position, size: Self::Size) -> Self::Stream<'_>;
 }
 
-#[allow(unused)]
 pub struct AsyncReadByteBufStream<'a, R, P, S> {
     reader: &'a mut R,
 
@@ -488,7 +487,6 @@ impl<E> From<IntegerConversionError> for DirectReaderBufferedAppenderError<E> {
     }
 }
 
-#[allow(unused)]
 impl<R, AB> DirectReaderBufferedAppender<R, AB, R::Position, R::Size>
 where
     R: AsyncAppend,
@@ -727,7 +725,6 @@ where
     }
 }
 
-#[allow(unused)]
 pub struct BufferedReaderBufferedAppender<R, RB, AB, P, S> {
     inner: R,
     read_limit: Option<S>,
@@ -1033,7 +1030,6 @@ where
     }
 }
 
-#[allow(unused)]
 pub struct BufferedReaderDirectAppender<R, RB, P, S> {
     inner: R,
     read_limit: Option<S>,
@@ -1208,7 +1204,6 @@ where
     }
 }
 
-#[allow(unused)]
 pub struct BufferedReader<R, RB, P, S> {
     inner: R,
     read_limit: Option<S>,
@@ -1362,7 +1357,6 @@ where
     }
 }
 
-#[allow(unused)]
 pub struct BufferedAppender<R, AB, P, S> {
     inner: R,
 
@@ -1405,7 +1399,6 @@ where
     type Error = BufferedAppenderError<R::Error>;
 }
 
-#[allow(unused)]
 impl<R, AB> BufferedAppender<R, AB, R::Position, R::Size>
 where
     R: AsyncAppend,
