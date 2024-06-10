@@ -220,11 +220,15 @@ pub trait StreamX {
 }
 
 pub trait StreamRead: AsyncRead {
-    type Stream<'a>: StreamX<Item<'a> = Result<Self::ByteBuf<'a>, Self::Error>>
+    type ReadStream<'a>: StreamX<Item<'a> = Result<Self::ByteBuf<'a>, Self::Error>>
     where
         Self: 'a;
 
-    fn read_stream_at(&mut self, position: Self::Position, size: Self::Size) -> Self::Stream<'_>;
+    fn read_stream_at(
+        &mut self,
+        position: Self::Position,
+        size: Self::Size,
+    ) -> Self::ReadStream<'_>;
 }
 
 pub struct AsyncReadByteBufStream<'a, R, P, S> {
@@ -268,11 +272,15 @@ impl<R> StreamRead for R
 where
     R: AsyncRead,
 {
-    type Stream<'x> = AsyncReadByteBufStream<'x, R, R::Position, R::Size>
+    type ReadStream<'x> = AsyncReadByteBufStream<'x, R, R::Position, R::Size>
     where
         Self: 'x;
 
-    fn read_stream_at(&mut self, position: Self::Position, size: Self::Size) -> Self::Stream<'_> {
+    fn read_stream_at(
+        &mut self,
+        position: Self::Position,
+        size: Self::Size,
+    ) -> Self::ReadStream<'_> {
         AsyncReadByteBufStream {
             reader: self,
             position,
