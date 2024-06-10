@@ -538,6 +538,12 @@ where
             .advance_anchor_by(write_len)
             .map_err(DirectReaderBufferedAppenderError::AppendBufferError)?;
 
+        self.append_buffer
+            .is_empty()
+            .not()
+            .then_some(())
+            .ok_or(DirectReaderBufferedAppenderError::FlushIncomplete)?;
+
         Ok(())
     }
 }
@@ -558,12 +564,6 @@ where
 {
     async fn close(mut self) -> Result<(), Self::Error> {
         self.flush().await?;
-
-        self.append_buffer
-            .is_empty()
-            .not()
-            .then_some(())
-            .ok_or(Self::Error::FlushIncomplete)?;
 
         self.inner.close().await.map_err(Self::Error::CloseError)
     }
@@ -967,6 +967,12 @@ where
             .advance_anchor_by(write_len)
             .map_err(BufferedReaderBufferedAppenderError::AppendBufferError)?;
 
+        self.append_buffer
+            .is_empty()
+            .not()
+            .then_some(())
+            .ok_or(BufferedReaderBufferedAppenderError::FlushIncomplete)?;
+
         Ok(())
     }
 }
@@ -987,12 +993,6 @@ where
 {
     async fn close(mut self) -> Result<(), Self::Error> {
         self.flush().await?;
-
-        self.append_buffer
-            .is_empty()
-            .not()
-            .then_some(())
-            .ok_or(Self::Error::FlushIncomplete)?;
 
         self.inner.close().await.map_err(Self::Error::CloseError)
     }
@@ -1469,6 +1469,12 @@ where
             .advance_anchor_by(write_len)
             .map_err(BufferedAppenderError::AppendBufferError)?;
 
+        self.append_buffer
+            .is_empty()
+            .not()
+            .then_some(())
+            .ok_or(BufferedAppenderError::FlushIncomplete)?;
+
         Ok(())
     }
 }
@@ -1489,12 +1495,6 @@ where
 {
     async fn close(mut self) -> Result<(), Self::Error> {
         self.flush().await?;
-
-        self.append_buffer
-            .is_empty()
-            .not()
-            .then_some(())
-            .ok_or(Self::Error::FlushIncomplete)?;
 
         self.inner.close().await.map_err(Self::Error::CloseError)
     }
