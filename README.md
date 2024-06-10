@@ -1,5 +1,7 @@
 # laminarmq-io
 
+[![rust-ci](https://github.com/arindas/laminarmq-io/actions/workflows/rust-ci.yml/badge.svg?branch=main)](https://github.com/arindas/laminarmq-io/actions/workflows/rust-ci.yml)
+
 An attempt to rewrite [`laminarmq`](https://github.com/arindas/laminarmq) I/O layer
 to acommodate capped/bounded memory overhead, both when reading and writing.
 
