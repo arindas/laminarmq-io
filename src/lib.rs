@@ -2,7 +2,7 @@ use std::{
     cmp::min,
     convert::Into,
     future::Future,
-    ops::{Add, AddAssign, Bound, Deref, DerefMut, RangeBounds, Sub, SubAssign},
+    ops::{Add, AddAssign, Bound, Deref, DerefMut, Not, RangeBounds, Sub, SubAssign},
 };
 
 use futures::{Stream, StreamExt, TryFutureExt};
@@ -353,6 +353,17 @@ where
         &mut self.buffer[self.len..]
     }
 
+    pub fn advance_start_by(&mut self, n: usize) -> Result<usize, BufferError> {
+        if n > self.len() {
+            return Err(BufferError::IndexOutOfBounds);
+        }
+
+        self.buffer.copy_within(n.., 0);
+        self.len -= n;
+
+        Ok(n)
+    }
+
     pub fn advance_end_by(&mut self, n: usize) -> Result<usize, BufferError> {
         if n > self.avail_to_append() {
             Err(BufferError::BufferOverflow)
@@ -416,11 +427,15 @@ where
         self.anchor_position = new_anchor_position;
     }
 
-    pub fn advance_anchor_by<S>(&mut self, n: S)
+    pub fn advance_anchor_by<S>(&mut self, n: S) -> Result<S, BufferError>
     where
         S: Quantifier + Into<P>,
     {
-        self.re_anchor(self.anchor_position() + n.into())
+        self.advance_start_by(n.to_usize().ok_or(BufferError::IntegerConversionError)?)?;
+
+        self.anchor_position += n.into();
+
+        Ok(n)
     }
 
     pub fn offset(&self, position: P) -> Option<usize> {
@@ -481,10 +496,14 @@ pub enum DirectReaderBufferedAppenderError<E> {
     ReadError(E),
     AppendError(E),
     RemoveError(E),
+    CloseError(E),
+
     ReadBeyondWrittenArea,
     ReadBufferGap,
     ReadUnderflow,
     AppendBufferError(BufferError),
+
+    FlushIncomplete,
 
     IntegerConversionError,
 }
@@ -515,7 +534,9 @@ where
             .await
             .map_err(DirectReaderBufferedAppenderError::AppendError)?;
 
-        self.append_buffer.advance_anchor_by(write_len);
+        self.append_buffer
+            .advance_anchor_by(write_len)
+            .map_err(DirectReaderBufferedAppenderError::AppendBufferError)?;
 
         Ok(())
     }
@@ -538,7 +559,13 @@ where
     async fn close(mut self) -> Result<(), Self::Error> {
         self.flush().await?;
 
-        self.inner.close().await.map_err(Self::Error::RemoveError)
+        self.append_buffer
+            .is_empty()
+            .not()
+            .then_some(())
+            .ok_or(Self::Error::FlushIncomplete)?;
+
+        self.inner.close().await.map_err(Self::Error::CloseError)
     }
 }
 
@@ -716,11 +743,11 @@ where
             ),
             (_, Err(error)) => (None, Err(error)),
         } {
-            (Some(AdvanceAnchor), Ok(append_location)) => {
-                self.append_buffer
-                    .advance_anchor_by(append_location.write_len);
-                Ok(append_location)
-            }
+            (Some(AdvanceAnchor), Ok(append_location)) => self
+                .append_buffer
+                .advance_anchor_by(append_location.write_len)
+                .map_err(Self::Error::AppendBufferError)
+                .map(|_| append_location),
             (_, result) => result,
         } {
             Ok(append_location) => {
@@ -760,11 +787,13 @@ pub enum BufferedReaderBufferedAppenderError<E> {
     AppendError(E),
     ReadError(E),
     RemoveError(E),
+    CloseError(E),
 
     AppendBufferError(BufferError),
     ReadBufferError(BufferError),
 
     ReadBeyondWrittenArea,
+    FlushIncomplete,
 
     IntegerConversionError,
 }
@@ -934,7 +963,9 @@ where
             .await
             .map_err(BufferedReaderBufferedAppenderError::AppendError)?;
 
-        self.append_buffer.advance_anchor_by(write_len);
+        self.append_buffer
+            .advance_anchor_by(write_len)
+            .map_err(BufferedReaderBufferedAppenderError::AppendBufferError)?;
 
         Ok(())
     }
@@ -957,7 +988,13 @@ where
     async fn close(mut self) -> Result<(), Self::Error> {
         self.flush().await?;
 
-        self.inner.close().await.map_err(Self::Error::RemoveError)
+        self.append_buffer
+            .is_empty()
+            .not()
+            .then_some(())
+            .ok_or(Self::Error::FlushIncomplete)?;
+
+        self.inner.close().await.map_err(Self::Error::CloseError)
     }
 }
 
@@ -1021,11 +1058,11 @@ where
             ),
             (_, Err(error)) => (None, Err(error)),
         } {
-            (Some(AdvanceAnchor), Ok(append_location)) => {
-                self.append_buffer
-                    .advance_anchor_by(append_location.write_len);
-                Ok(append_location)
-            }
+            (Some(AdvanceAnchor), Ok(append_location)) => self
+                .append_buffer
+                .advance_anchor_by(append_location.write_len)
+                .map_err(Self::Error::AppendBufferError)
+                .map(|_| append_location),
             (_, result) => result,
         } {
             Ok(append_location) => {
@@ -1376,8 +1413,9 @@ pub struct BufferedAppender<R, AB, P, S> {
 pub enum BufferedAppenderError<AE> {
     AppendError(AE),
     RemoveError(AE),
+    CloseError(AE),
     AppendBufferError(BufferError),
-
+    FlushIncomplete,
     IntegerConversionError,
 }
 
@@ -1427,7 +1465,9 @@ where
             .await
             .map_err(BufferedAppenderError::AppendError)?;
 
-        self.append_buffer.advance_anchor_by(write_len);
+        self.append_buffer
+            .advance_anchor_by(write_len)
+            .map_err(BufferedAppenderError::AppendBufferError)?;
 
         Ok(())
     }
@@ -1450,7 +1490,13 @@ where
     async fn close(mut self) -> Result<(), Self::Error> {
         self.flush().await?;
 
-        self.inner.close().await.map_err(Self::Error::RemoveError)
+        self.append_buffer
+            .is_empty()
+            .not()
+            .then_some(())
+            .ok_or(Self::Error::FlushIncomplete)?;
+
+        self.inner.close().await.map_err(Self::Error::CloseError)
     }
 }
 
@@ -1514,11 +1560,11 @@ where
             ),
             (_, Err(error)) => (None, Err(error)),
         } {
-            (Some(AdvanceAnchor), Ok(append_location)) => {
-                self.append_buffer
-                    .advance_anchor_by(append_location.write_len);
-                Ok(append_location)
-            }
+            (Some(AdvanceAnchor), Ok(append_location)) => self
+                .append_buffer
+                .advance_anchor_by(append_location.write_len)
+                .map_err(Self::Error::AppendBufferError)
+                .map(|_| append_location),
             (_, result) => result,
         } {
             Ok(append_location) => {
