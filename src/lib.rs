@@ -1578,3 +1578,4 @@ where
 }
 
 pub mod fs;
+pub mod object_storage;
