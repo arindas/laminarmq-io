@@ -219,7 +219,11 @@ pub trait StreamX {
     fn next(&mut self) -> impl Future<Output = Option<Self::Item<'_>>>;
 }
 
-pub trait StreamRead: AsyncRead {
+pub trait StreamRead: SizedEntity + FallibleEntity {
+    type ByteBuf<'a>: Deref<Target = [u8]> + 'a
+    where
+        Self: 'a;
+
     type ReadStream<'a>: StreamX<Item<'a> = Result<Self::ByteBuf<'a>, Self::Error>>
     where
         Self: 'a;
@@ -272,9 +276,11 @@ impl<R> StreamRead for R
 where
     R: AsyncRead,
 {
-    type ReadStream<'x> = AsyncReadByteBufStream<'x, R, R::Position, R::Size>
+    type ByteBuf<'a> = R::ByteBuf<'a> where R: 'a;
+
+    type ReadStream<'a> = AsyncReadByteBufStream<'a, R, R::Position, R::Size>
     where
-        Self: 'x;
+        Self: 'a;
 
     fn read_stream_at(
         &mut self,
