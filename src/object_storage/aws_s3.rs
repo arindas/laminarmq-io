@@ -1,4 +1,4 @@
-use crate::StreamX;
+use crate::Stream;
 use crate::{
     AppendLocation, AsyncAppend, AsyncBufRead, AsyncClose, AsyncRead, AsyncRemove, AsyncTruncate,
     FallibleEntity, IntegerConversionError, ReadBytesLen, SizedEntity,
@@ -161,7 +161,7 @@ impl<P> FallibleEntity for AwsS3BackedFile<P> {
     type Error = AwsS3Error;
 }
 
-impl StreamX for ByteStream {
+impl Stream for ByteStream {
     type Item<'a> = Result<Bytes, AwsS3Error>
     where
         Self: 'a;

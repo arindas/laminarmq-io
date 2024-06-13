@@ -5,8 +5,9 @@ use std::{
     ops::{Add, AddAssign, Bound, Deref, DerefMut, Not, RangeBounds, Sub, SubAssign},
 };
 
-use futures::{Stream, StreamExt, TryFutureExt};
+use futures::TryFutureExt;
 use num::{zero, CheckedSub, FromPrimitive, ToPrimitive, Unsigned, Zero};
+use stream::{Chain, Stream};
 
 pub trait Quantifier:
     Add<Output = Self>
@@ -105,7 +106,7 @@ where
     ) -> Result<AppendLocation<A::Position, A::Size>, AsyncStreamAppendError<A::Error>>
     where
         XBuf: Deref<Target = [u8]>,
-        X: Stream<Item = Result<XBuf, XE>> + Unpin,
+        for<'x> X: Stream<Item<'x> = Result<XBuf, XE>> + Unpin + 'x,
     {
         let file = self.0;
 
@@ -211,28 +212,16 @@ pub trait AsyncRead: SizedEntity + FallibleEntity {
     ) -> impl Future<Output = Result<ReadBytes<Self::ByteBuf<'_>, Self::Size>, Self::Error>>;
 }
 
-pub trait StreamX {
-    type Item<'a>
-    where
-        Self: 'a;
-
-    fn next(&mut self) -> impl Future<Output = Option<Self::Item<'_>>>;
-}
-
 pub trait StreamRead: SizedEntity + FallibleEntity {
     type ByteBuf<'a>: Deref<Target = [u8]> + 'a
     where
         Self: 'a;
 
-    type ReadStream<'a>: StreamX<Item<'a> = Result<Self::ByteBuf<'a>, Self::Error>>
-    where
-        Self: 'a;
-
-    fn read_stream_at(
-        &mut self,
+    fn read_stream_at<'a>(
+        &'a mut self,
         position: Self::Position,
         size: Self::Size,
-    ) -> Self::ReadStream<'_>;
+    ) -> impl Stream<Item<'a> = Result<Self::ByteBuf<'a>, Self::Error>>;
 }
 
 pub struct AsyncReadByteBufStream<'a, R, P, S> {
@@ -242,7 +231,7 @@ pub struct AsyncReadByteBufStream<'a, R, P, S> {
     bytes_remaining: S,
 }
 
-impl<'a, R> StreamX for AsyncReadByteBufStream<'a, R, R::Position, R::Size>
+impl<'a, R> Stream for AsyncReadByteBufStream<'a, R, R::Position, R::Size>
 where
     R: AsyncRead,
 {
@@ -278,15 +267,11 @@ where
 {
     type ByteBuf<'a> = R::ByteBuf<'a> where R: 'a;
 
-    type ReadStream<'a> = AsyncReadByteBufStream<'a, R, R::Position, R::Size>
-    where
-        Self: 'a;
-
-    fn read_stream_at(
-        &mut self,
+    fn read_stream_at<'a>(
+        &'a mut self,
         position: Self::Position,
         size: Self::Size,
-    ) -> Self::ReadStream<'_> {
+    ) -> impl Stream<Item<'a> = Result<Self::ByteBuf<'a>, Self::Error>> {
         AsyncReadByteBufStream {
             reader: self,
             position,
@@ -1583,5 +1568,166 @@ where
     }
 }
 
+pub struct StreamReaderBufferedAppender<R, AB, P, S> {
+    inner: R,
+    read_limit: Option<S>,
+
+    append_buffer: AnchoredBuffer<AB, P>,
+
+    size: S,
+}
+
+pub enum StreamReaderBufferedAppenderError<E> {
+    ReadError(E),
+    AppendError(E),
+    RemoveError(E),
+    CloseError(E),
+
+    ReadBeyondWrittenArea,
+    ReadBufferGap,
+    ReadUnderflow,
+    AppendBufferError(BufferError),
+
+    FlushIncomplete,
+
+    IntegerConversionError,
+}
+
+impl<E> From<IntegerConversionError> for StreamReaderBufferedAppenderError<E> {
+    fn from(_: IntegerConversionError) -> Self {
+        Self::IntegerConversionError
+    }
+}
+
+impl<R, AB> StreamReaderBufferedAppender<R, AB, R::Position, R::Size>
+where
+    R: AsyncAppend,
+    AB: DerefMut<Target = [u8]>,
+{
+    async fn flush(&mut self) -> Result<(), StreamReaderBufferedAppenderError<R::Error>> {
+        let buffered_bytes = self
+            .append_buffer
+            .get_read_slice(..)
+            .map_err(StreamReaderBufferedAppenderError::AppendBufferError)?;
+
+        let AppendLocation {
+            write_position: _,
+            write_len,
+        } = self
+            .inner
+            .append(buffered_bytes)
+            .await
+            .map_err(StreamReaderBufferedAppenderError::AppendError)?;
+
+        self.append_buffer
+            .advance_anchor_by(write_len)
+            .map_err(StreamReaderBufferedAppenderError::AppendBufferError)?;
+
+        self.append_buffer
+            .is_empty()
+            .not()
+            .then_some(())
+            .ok_or(StreamReaderBufferedAppenderError::FlushIncomplete)?;
+
+        Ok(())
+    }
+}
+
+impl<R, AB, P, S> AsyncRemove for StreamReaderBufferedAppender<R, AB, P, S>
+where
+    R: AsyncRemove,
+{
+    fn remove(self) -> impl Future<Output = Result<(), Self::Error>> {
+        self.inner.remove().map_err(Self::Error::RemoveError)
+    }
+}
+
+impl<R, AB> AsyncClose for StreamReaderBufferedAppender<R, AB, R::Position, R::Size>
+where
+    R: AsyncClose + AsyncAppend,
+    AB: DerefMut<Target = [u8]>,
+{
+    async fn close(mut self) -> Result<(), Self::Error> {
+        self.flush().await?;
+
+        self.inner.close().await.map_err(Self::Error::CloseError)
+    }
+}
+
+impl<R, AB> SizedEntity for StreamReaderBufferedAppender<R, AB, R::Position, R::Size>
+where
+    R: SizedEntity,
+{
+    type Position = R::Position;
+
+    type Size = R::Size;
+
+    fn size(&self) -> Self::Size {
+        self.size
+    }
+}
+
+impl<R, AB, P, S> FallibleEntity for StreamReaderBufferedAppender<R, AB, P, S>
+where
+    R: FallibleEntity,
+{
+    type Error = StreamReaderBufferedAppenderError<R::Error>;
+}
+
+pub enum StreamReaderBufferedAppenderByteBuf<'a, T> {
+    Buffered(&'a [u8]),
+    Read(T),
+}
+
+impl<'a, T> Deref for StreamReaderBufferedAppenderByteBuf<'a, T>
+where
+    T: Deref<Target = [u8]> + 'a,
+{
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Buffered(buffered) => buffered,
+            Self::Read(read_bytes) => read_bytes,
+        }
+    }
+}
+
+pub struct StreamReaderBufferedAppenderByteBufMappedReadStream<S>(S);
+
+impl<S, I, E> Stream for StreamReaderBufferedAppenderByteBufMappedReadStream<S>
+where
+    for<'x> S: Stream<Item<'x> = Result<I, E>> + 'x,
+{
+    type Item<'a> = Result<StreamReaderBufferedAppenderByteBuf<'a, I>, StreamReaderBufferedAppenderError<E>>
+    where
+        Self: 'a;
+
+    async fn next(&mut self) -> Option<Self::Item<'_>> {
+        self.0.next().await.map(|x| {
+            x.map(StreamReaderBufferedAppenderByteBuf::Read)
+                .map_err(StreamReaderBufferedAppenderError::ReadError)
+        })
+    }
+}
+
+impl<R, AB> StreamRead for StreamReaderBufferedAppender<R, AB, R::Position, R::Size>
+where
+    R: StreamRead,
+{
+    type ByteBuf<'a> = StreamReaderBufferedAppenderByteBuf<'a, R::ByteBuf<'a>>
+    where
+        Self: 'a;
+
+    fn read_stream_at<'a>(
+        &'a mut self,
+        position: Self::Position,
+        size: Self::Size,
+    ) -> impl Stream<Item<'a> = Result<Self::ByteBuf<'a>, Self::Error>> {
+        stream::once(Ok(StreamReaderBufferedAppenderByteBuf::Buffered(&[])))
+    }
+}
+
 pub mod fs;
 pub mod object_storage;
+pub mod stream;
