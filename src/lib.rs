@@ -1,3 +1,7 @@
+pub mod fs;
+pub mod object_storage;
+pub mod stream;
+
 use std::{
     cmp::min,
     convert::Into,
@@ -7,7 +11,7 @@ use std::{
 
 use futures::TryFutureExt;
 use num::{zero, CheckedSub, FromPrimitive, ToPrimitive, Unsigned, Zero};
-use stream::{Chain, Stream};
+use stream::Stream;
 
 pub trait Quantifier:
     Add<Output = Self>
@@ -217,6 +221,7 @@ pub trait StreamRead: SizedEntity + FallibleEntity {
     where
         Self: 'a;
 
+    #[allow(clippy::needless_lifetimes)]
     fn read_stream_at<'a>(
         &'a mut self,
         position: Self::Position,
@@ -267,6 +272,7 @@ where
 {
     type ByteBuf<'a> = R::ByteBuf<'a> where R: 'a;
 
+    #[allow(clippy::needless_lifetimes)]
     fn read_stream_at<'a>(
         &'a mut self,
         position: Self::Position,
@@ -1568,6 +1574,7 @@ where
     }
 }
 
+#[allow(unused)]
 pub struct StreamReaderBufferedAppender<R, AB, P, S> {
     inner: R,
     read_limit: Option<S>,
@@ -1719,15 +1726,14 @@ where
     where
         Self: 'a;
 
+    #[allow(clippy::needless_lifetimes)]
     fn read_stream_at<'a>(
         &'a mut self,
         position: Self::Position,
         size: Self::Size,
     ) -> impl Stream<Item<'a> = Result<Self::ByteBuf<'a>, Self::Error>> {
+        todo!();
+
         stream::once(Ok(StreamReaderBufferedAppenderByteBuf::Buffered(&[])))
     }
 }
-
-pub mod fs;
-pub mod object_storage;
-pub mod stream;

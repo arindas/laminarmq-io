@@ -1,8 +1,4 @@
-use crate::Stream;
-use crate::{
-    AppendLocation, AsyncAppend, AsyncBufRead, AsyncClose, AsyncRead, AsyncRemove, AsyncTruncate,
-    FallibleEntity, IntegerConversionError, ReadBytesLen, SizedEntity,
-};
+use crate::{stream, FallibleEntity, IntegerConversionError, SizedEntity, Stream, StreamRead};
 use aws_sdk_s3::{
     primitives::{ByteStream, ByteStreamError},
     Client,
@@ -10,6 +6,7 @@ use aws_sdk_s3::{
 use bytes::Bytes;
 use futures::prelude::Future;
 use std::cmp::Ordering;
+use std::error::Error;
 
 pub const PART_SIZE_MAP_KEY_SUFFIX: &str = "_part_size_map.txt";
 
@@ -149,6 +146,8 @@ pub enum AwsS3Error {
     ByteStreamError(ByteStreamError),
 
     IntegerConversionError,
+
+    AwsSdkError(String),
 }
 
 impl From<IntegerConversionError> for AwsS3Error {
@@ -170,5 +169,64 @@ impl Stream for ByteStream {
         self.next()
             .await
             .map(|x| x.map_err(AwsS3Error::ByteStreamError))
+    }
+}
+
+pub struct ByteStreamFut<F> {
+    fut: Option<F>,
+    byte_stream: ByteStream,
+}
+
+impl<F> ByteStreamFut<F> {
+    pub fn new(fut: F) -> Self {
+        Self {
+            fut: Some(fut),
+            byte_stream: ByteStream::from_static(&[]),
+        }
+    }
+}
+
+impl<F, E> Stream for ByteStreamFut<F>
+where
+    F: Future<Output = Result<ByteStream, E>>,
+    E: Error,
+{
+    type Item<'a> = Result<Bytes, AwsS3Error>
+    where
+        Self: 'a;
+
+    async fn next(&mut self) -> Option<Self::Item<'_>> {
+        match match self.fut.take() {
+            Some(f) => f.await.map(Some),
+            None => Ok(None),
+        } {
+            Err(err) => return Some(Err(AwsS3Error::AwsSdkError(err.to_string()))),
+            Ok(Some(stream)) => {
+                self.byte_stream = stream;
+            }
+            _ => {}
+        }
+
+        self.byte_stream
+            .next()
+            .await
+            .map(|x| x.map_err(AwsS3Error::ByteStreamError))
+    }
+}
+
+impl<P> StreamRead for AwsS3BackedFile<P> {
+    type ByteBuf<'a> = Bytes
+    where
+        Self: 'a;
+
+    #[allow(clippy::needless_lifetimes)]
+    fn read_stream_at<'a>(
+        &'a mut self,
+        position: Self::Position,
+        size: Self::Size,
+    ) -> impl Stream<Item<'a> = Result<Self::ByteBuf<'a>, Self::Error>> {
+        todo!();
+
+        stream::once(Ok(Bytes::from_static(&[])))
     }
 }
