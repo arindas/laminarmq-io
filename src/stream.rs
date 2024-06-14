@@ -113,3 +113,66 @@ where
 {
     IterChain::new(iter)
 }
+
+pub struct Map<S, F> {
+    stream: S,
+    map_fn: F,
+}
+
+impl<S, F> Map<S, F> {
+    pub fn new(stream: S, map_fn: F) -> Self {
+        Self { stream, map_fn }
+    }
+}
+
+impl<S, F, A, B> Stream for Map<S, F>
+where
+    for<'x> S: Stream<Item<'x> = A> + 'x,
+    F: FnMut(A) -> B,
+{
+    type Item<'a> = B
+    where
+        Self: 'a;
+
+    async fn next(&mut self) -> Option<Self::Item<'_>> {
+        match self.stream.next().await {
+            Some(value) => Some((self.map_fn)(value)),
+            None => None,
+        }
+    }
+}
+
+pub fn map<S, F>(stream: S, map_fn: F) -> Map<S, F> {
+    Map::new(stream, map_fn)
+}
+
+pub struct Latch<S> {
+    stream: S,
+    latch_condition: bool,
+}
+
+impl<S> Latch<S> {
+    pub fn new(stream: S, latch_condition: bool) -> Self {
+        Self {
+            stream,
+            latch_condition,
+        }
+    }
+}
+
+impl<S> Stream for Latch<S>
+where
+    S: Stream,
+{
+    type Item<'a> = S::Item<'a>
+    where
+        Self: 'a;
+
+    async fn next(&mut self) -> Option<Self::Item<'_>> {
+        if self.latch_condition {
+            self.stream.next().await
+        } else {
+            None
+        }
+    }
+}
