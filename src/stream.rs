@@ -69,3 +69,47 @@ where
 pub fn chain<S1, S2>(stream1: S1, stream2: S2) -> Chain<S1, S2> {
     Chain(stream1, stream2)
 }
+
+pub struct IterChain<I, S> {
+    iter: I,
+    current_stream: S,
+}
+
+impl<I, S> IterChain<I, S>
+where
+    S: Default,
+{
+    pub fn new(iter: I) -> Self {
+        Self {
+            iter,
+            current_stream: Default::default(),
+        }
+    }
+}
+
+impl<I, S, T> Stream for IterChain<I, S>
+where
+    I: Iterator<Item = S>,
+    for<'x> S: Stream<Item<'x> = T> + 'x,
+{
+    type Item<'a> = T
+    where
+        Self: 'a;
+
+    async fn next(&mut self) -> Option<Self::Item<'_>> {
+        match self.current_stream.next().await {
+            Some(value) => Some(value),
+            None => {
+                self.current_stream = self.iter.next()?;
+                self.current_stream.next().await
+            }
+        }
+    }
+}
+
+pub fn iter_chain<I, S>(iter: I) -> IterChain<I, S>
+where
+    S: Default,
+{
+    IterChain::new(iter)
+}

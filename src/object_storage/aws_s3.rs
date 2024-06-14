@@ -1,11 +1,13 @@
 use crate::{stream, FallibleEntity, IntegerConversionError, SizedEntity, Stream, StreamRead};
 use aws_sdk_s3::{
+    operation::get_object::GetObjectOutput,
     primitives::{ByteStream, ByteStreamError},
     Client,
 };
 use bytes::Bytes;
 use futures::prelude::Future;
-use std::cmp::Ordering;
+use num::zero;
+use std::cmp::{max, min, Ordering};
 use std::error::Error;
 
 pub const PART_SIZE_MAP_KEY_SUFFIX: &str = "_part_size_map.txt";
@@ -172,12 +174,21 @@ impl Stream for ByteStream {
     }
 }
 
-pub struct ByteStreamFut<F> {
+pub struct GetObjectOutputFuture<F> {
     fut: Option<F>,
     byte_stream: ByteStream,
 }
 
-impl<F> ByteStreamFut<F> {
+impl<F> Default for GetObjectOutputFuture<F> {
+    fn default() -> Self {
+        Self {
+            fut: None,
+            byte_stream: ByteStream::from_static(&[]),
+        }
+    }
+}
+
+impl<F> GetObjectOutputFuture<F> {
     pub fn new(fut: F) -> Self {
         Self {
             fut: Some(fut),
@@ -186,9 +197,9 @@ impl<F> ByteStreamFut<F> {
     }
 }
 
-impl<F, E> Stream for ByteStreamFut<F>
+impl<F, E> Stream for GetObjectOutputFuture<F>
 where
-    F: Future<Output = Result<ByteStream, E>>,
+    F: Future<Output = Result<GetObjectOutput, E>>,
     E: Error,
 {
     type Item<'a> = Result<Bytes, AwsS3Error>
@@ -197,7 +208,7 @@ where
 
     async fn next(&mut self) -> Option<Self::Item<'_>> {
         match match self.fut.take() {
-            Some(f) => f.await.map(Some),
+            Some(f) => f.await.map(|x| Some(x.body)),
             None => Ok(None),
         } {
             Err(err) => return Some(Err(AwsS3Error::AwsSdkError(err.to_string()))),
@@ -214,7 +225,10 @@ where
     }
 }
 
-impl<P> StreamRead for AwsS3BackedFile<P> {
+impl<P> StreamRead for AwsS3BackedFile<P>
+where
+    P: PartMap,
+{
     type ByteBuf<'a> = Bytes
     where
         Self: 'a;
@@ -225,8 +239,41 @@ impl<P> StreamRead for AwsS3BackedFile<P> {
         position: Self::Position,
         size: Self::Size,
     ) -> impl Stream<Item<'a> = Result<Self::ByteBuf<'a>, Self::Error>> {
-        todo!();
+        let first_part_idx = self
+            .part_size_map
+            .position_part_containing_offset(position)
+            .unwrap_or(self.part_size_map.len());
 
-        stream::once(Ok(Bytes::from_static(&[])))
+        let get_object_output_future_iter = (first_part_idx..self.part_size_map.len())
+            .scan(
+                (position, size),
+                |(read_position, bytes_left_to_read), idx| {
+                    if *bytes_left_to_read <= zero() {
+                        return None;
+                    }
+
+                    let part = self.part_size_map.get_part_at_idx(idx)?;
+
+                    let range_start = max(*read_position, part.offset);
+
+                    let range_end = min(range_start + *bytes_left_to_read, part.end());
+
+                    *bytes_left_to_read -= range_end - range_start;
+
+                    Some((idx, range_start, range_end - 1))
+                },
+            )
+            .map(|(part_idx, range_start, range_end)| {
+                GetObjectOutputFuture::new(
+                    self.client
+                        .get_object()
+                        .bucket(&self.bucket)
+                        .key(format!("{}_{}.part.txt", &self.object_prefix, part_idx))
+                        .range(format!("bytes={}-{}", range_start, range_end))
+                        .send(),
+                )
+            });
+
+        stream::iter_chain(get_object_output_future_iter)
     }
 }
