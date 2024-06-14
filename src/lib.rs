@@ -221,12 +221,14 @@ pub trait StreamRead: SizedEntity + FallibleEntity {
     where
         Self: 'a;
 
-    #[allow(clippy::needless_lifetimes)]
-    fn read_stream_at<'a>(
+    fn read_stream_at<'a, 'b>(
         &'a mut self,
         position: Self::Position,
         size: Self::Size,
-    ) -> impl Stream<Item<'a> = Result<Self::ByteBuf<'a>, Self::Error>>;
+    ) -> impl Stream<Item<'b> = Result<Self::ByteBuf<'b>, Self::Error>>
+    where
+        Self: 'a,
+        'a: 'b;
 }
 
 pub struct AsyncReadByteBufStream<'a, R, P, S> {
@@ -236,7 +238,7 @@ pub struct AsyncReadByteBufStream<'a, R, P, S> {
     bytes_remaining: S,
 }
 
-impl<'a, R> Stream for AsyncReadByteBufStream<'a, R, R::Position, R::Size>
+impl<'b, R> Stream for AsyncReadByteBufStream<'b, R, R::Position, R::Size>
 where
     R: AsyncRead,
 {
@@ -244,7 +246,7 @@ where
     where
         Self: 'x;
 
-    async fn next(&mut self) -> Option<Self::Item<'_>> {
+    async fn next<'a>(&'a mut self) -> Option<Self::Item<'a>> {
         if self.bytes_remaining == zero() {
             return None;
         }
@@ -272,12 +274,15 @@ where
 {
     type ByteBuf<'a> = R::ByteBuf<'a> where R: 'a;
 
-    #[allow(clippy::needless_lifetimes)]
-    fn read_stream_at<'a>(
+    fn read_stream_at<'a, 'b>(
         &'a mut self,
         position: Self::Position,
         size: Self::Size,
-    ) -> impl Stream<Item<'a> = Result<Self::ByteBuf<'a>, Self::Error>> {
+    ) -> impl Stream<Item<'b> = Result<Self::ByteBuf<'b>, Self::Error>>
+    where
+        Self: 'a,
+        'a: 'b,
+    {
         AsyncReadByteBufStream {
             reader: self,
             position,
@@ -1702,22 +1707,6 @@ where
 
 pub struct StreamReaderBufferedAppenderByteBufMappedReadStream<S>(S);
 
-impl<S, I, E> Stream for StreamReaderBufferedAppenderByteBufMappedReadStream<S>
-where
-    for<'x> S: Stream<Item<'x> = Result<I, E>> + 'x,
-{
-    type Item<'a> = Result<StreamReaderBufferedAppenderByteBuf<'a, I>, StreamReaderBufferedAppenderError<E>>
-    where
-        Self: 'a;
-
-    async fn next(&mut self) -> Option<Self::Item<'_>> {
-        self.0.next().await.map(|x| {
-            x.map(StreamReaderBufferedAppenderByteBuf::Read)
-                .map_err(StreamReaderBufferedAppenderError::ReadError)
-        })
-    }
-}
-
 impl<R, AB> StreamRead for StreamReaderBufferedAppender<R, AB, R::Position, R::Size>
 where
     R: StreamRead,
@@ -1726,13 +1715,16 @@ where
     where
         Self: 'a;
 
-    #[allow(clippy::needless_lifetimes)]
-    fn read_stream_at<'a>(
+    fn read_stream_at<'a, 'b>(
         &'a mut self,
         position: Self::Position,
         size: Self::Size,
-    ) -> impl Stream<Item<'a> = Result<Self::ByteBuf<'a>, Self::Error>> {
-        todo!();
+    ) -> impl Stream<Item<'b> = Result<Self::ByteBuf<'b>, Self::Error>>
+    where
+        Self: 'a,
+        'a: 'b,
+    {
+        let _x = self.inner.read_stream_at(position, size);
 
         stream::once(Ok(StreamReaderBufferedAppenderByteBuf::Buffered(&[])))
     }

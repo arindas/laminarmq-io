@@ -1,4 +1,4 @@
-use std::marker::Unpin;
+use std::{marker::Unpin, ops::Deref};
 
 use futures::{Future, Stream as FuturesStream, StreamExt};
 
@@ -7,7 +7,7 @@ pub trait Stream {
     where
         Self: 'a;
 
-    fn next(&mut self) -> impl Future<Output = Option<Self::Item<'_>>>;
+    fn next(&mut self) -> impl Future<Output = Option<Self::Item<'_>>> + '_;
 }
 
 pub struct WrappedStream<S>(S);
@@ -49,12 +49,12 @@ impl<T> Stream for Once<T> {
 
 pub struct Chain<S1, S2>(S1, S2);
 
-impl<S1, S2, T> Stream for Chain<S1, S2>
+impl<S1, S2> Stream for Chain<S1, S2>
 where
-    for<'x> S1: Stream<Item<'x> = T> + 'x,
-    for<'x> S2: Stream<Item<'x> = T> + 'x,
+    S1: Stream,
+    for<'x> S2: Stream<Item<'x> = S1::Item<'x>> + 'x,
 {
-    type Item<'a> = T
+    type Item<'a> = S1::Item<'a>
     where
         Self: 'a;
 
@@ -73,6 +73,7 @@ pub fn chain<S1, S2>(stream1: S1, stream2: S2) -> Chain<S1, S2> {
 pub struct IterChain<I, S> {
     iter: I,
     current_stream: S,
+    proceed: bool,
 }
 
 impl<I, S> IterChain<I, S>
@@ -83,26 +84,57 @@ where
         Self {
             iter,
             current_stream: Default::default(),
+            proceed: true,
         }
     }
 }
 
-impl<I, S, T> Stream for IterChain<I, S>
+pub enum IterChainItem<T> {
+    Item(T),
+    Delim,
+}
+
+impl<T> Deref for IterChainItem<T>
+where
+    T: Deref<Target = [u8]>,
+{
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            IterChainItem::Item(x) => x.deref(),
+            IterChainItem::Delim => &[],
+        }
+    }
+}
+
+pub trait ZeroVal {
+    fn zero_val() -> Self;
+}
+
+impl<I, S> Stream for IterChain<I, S>
 where
     I: Iterator<Item = S>,
-    for<'x> S: Stream<Item<'x> = T> + 'x,
+    S: Stream,
+    for<'x> S::Item<'x>: ZeroVal,
 {
-    type Item<'a> = T
+    type Item<'a> = S::Item<'a>
     where
         Self: 'a;
 
     async fn next(&mut self) -> Option<Self::Item<'_>> {
-        match self.current_stream.next().await {
-            Some(value) => Some(value),
-            None => {
-                self.current_stream = self.iter.next()?;
-                self.current_stream.next().await
-            }
+        if self.proceed {
+            self.current_stream = self.iter.next()?;
+            self.proceed = false;
+        }
+
+        let x = self.current_stream.next().await;
+
+        if x.is_none() {
+            self.proceed = true;
+            Some(Self::Item::zero_val())
+        } else {
+            x
         }
     }
 }
@@ -134,10 +166,13 @@ where
     where
         Self: 'a;
 
-    async fn next(&mut self) -> Option<Self::Item<'_>> {
-        match self.stream.next().await {
-            Some(value) => Some((self.map_fn)(value)),
-            None => None,
+    #[allow(clippy::manual_async_fn)]
+    fn next(&mut self) -> impl Future<Output = Option<Self::Item<'_>>> + '_ {
+        async {
+            match self.stream.next().await {
+                Some(value) => Some((self.map_fn)(value)),
+                None => None,
+            }
         }
     }
 }

@@ -1,4 +1,7 @@
-use crate::{stream, FallibleEntity, IntegerConversionError, SizedEntity, Stream, StreamRead};
+use crate::{
+    stream::{self, ZeroVal},
+    FallibleEntity, IntegerConversionError, SizedEntity, Stream, StreamRead,
+};
 use aws_sdk_s3::{
     operation::get_object::GetObjectOutput,
     primitives::{ByteStream, ByteStreamError},
@@ -206,22 +209,31 @@ where
     where
         Self: 'a;
 
-    async fn next(&mut self) -> Option<Self::Item<'_>> {
-        match match self.fut.take() {
-            Some(f) => f.await.map(|x| Some(x.body)),
-            None => Ok(None),
-        } {
-            Err(err) => return Some(Err(AwsS3Error::AwsSdkError(err.to_string()))),
-            Ok(Some(stream)) => {
-                self.byte_stream = stream;
+    #[allow(clippy::manual_async_fn)]
+    fn next(&mut self) -> impl Future<Output = Option<Self::Item<'_>>> + '_ {
+        async {
+            match match self.fut.take() {
+                Some(f) => f.await.map(|x| Some(x.body)),
+                None => Ok(None),
+            } {
+                Err(err) => return Some(Err(AwsS3Error::AwsSdkError(err.to_string()))),
+                Ok(Some(stream)) => {
+                    self.byte_stream = stream;
+                }
+                _ => {}
             }
-            _ => {}
-        }
 
-        self.byte_stream
-            .next()
-            .await
-            .map(|x| x.map_err(AwsS3Error::ByteStreamError))
+            self.byte_stream
+                .next()
+                .await
+                .map(|x| x.map_err(AwsS3Error::ByteStreamError))
+        }
+    }
+}
+
+impl ZeroVal for Result<Bytes, AwsS3Error> {
+    fn zero_val() -> Self {
+        Ok(Bytes::from_static(&[]))
     }
 }
 
@@ -233,12 +245,15 @@ where
     where
         Self: 'a;
 
-    #[allow(clippy::needless_lifetimes)]
-    fn read_stream_at<'a>(
+    fn read_stream_at<'a, 'b>(
         &'a mut self,
         position: Self::Position,
         size: Self::Size,
-    ) -> impl Stream<Item<'a> = Result<Self::ByteBuf<'a>, Self::Error>> {
+    ) -> impl Stream<Item<'b> = Result<Self::ByteBuf<'b>, Self::Error>>
+    where
+        Self: 'a,
+        'a: 'b,
+    {
         let first_part_idx = self
             .part_size_map
             .position_part_containing_offset(position)
@@ -268,7 +283,7 @@ where
                     self.client
                         .get_object()
                         .bucket(&self.bucket)
-                        .key(format!("{}_{}.part.txt", &self.object_prefix, part_idx))
+                        .key(format!("{}_{}.txt", &self.object_prefix, part_idx))
                         .range(format!("bytes={}-{}", range_start, range_end))
                         .send(),
                 )
