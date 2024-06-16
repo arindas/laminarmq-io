@@ -127,45 +127,6 @@ where
     IterChain::new(iter, delim_fn)
 }
 
-pub struct Map<S, F> {
-    stream: S,
-    map_fn: F,
-}
-
-impl<S, F> Map<S, F> {
-    pub fn new(stream: S, map_fn: F) -> Self {
-        Self { stream, map_fn }
-    }
-}
-
-impl<S, F, B> Stream for Map<S, F>
-where
-    S: Stream,
-    for<'x> F: FnMut(S::Item<'x>) -> B,
-{
-    type Item<'a> = B
-    where
-        Self: 'a;
-
-    #[allow(clippy::manual_async_fn)]
-    fn next(&mut self) -> impl Future<Output = Option<Self::Item<'_>>> + '_ {
-        async {
-            match self.stream.next().await {
-                Some(value) => Some((self.map_fn)(value)),
-                None => None,
-            }
-        }
-    }
-}
-
-pub fn map<S, F, B>(stream: S, map_fn: F) -> Map<S, F>
-where
-    S: Stream,
-    for<'x> F: FnMut(S::Item<'x>) -> B,
-{
-    Map::new(stream, map_fn)
-}
-
 pub struct Latch<S> {
     stream: S,
     latch_condition: bool,
