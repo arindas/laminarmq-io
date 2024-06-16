@@ -240,6 +240,63 @@ pub trait StreamRead<B: ByteLender>: SizedEntity + FallibleEntity {
     ) -> impl Stream<FallibleByteLender<B, Self::Error>>;
 }
 
+pub struct AsyncReadStreamer<'a, R, B, P, SZ> {
+    reader: &'a mut R,
+    position: P,
+    bytes_to_read: SZ,
+
+    _phantom_data: PhantomData<B>,
+}
+
+impl<'x, R, B> Stream<FallibleByteLender<B, R::Error>>
+    for AsyncReadStreamer<'x, R, B, R::Position, R::Size>
+where
+    R: AsyncRead<B>,
+    B: ByteLender,
+{
+    async fn next<'a>(&'a mut self) -> Option<<FallibleByteLender<B, R::Error> as Lender>::Item<'a>>
+    where
+        FallibleByteLender<B, R::Error>: 'a,
+    {
+        if self.bytes_to_read == zero() {
+            return None;
+        }
+
+        let read_bytes = self.reader.read_at(self.position, self.bytes_to_read).await;
+
+        if read_bytes.is_err() {
+            return read_bytes.err().map(Err);
+        }
+
+        let read_bytes = read_bytes.ok()?;
+
+        self.position += read_bytes.read_len.into();
+
+        self.bytes_to_read -= read_bytes.read_len;
+
+        Some(Ok(read_bytes.read_bytes))
+    }
+}
+
+impl<R, B> StreamRead<B> for R
+where
+    R: AsyncRead<B>,
+    B: ByteLender,
+{
+    fn read_stream_at(
+        &mut self,
+        position: Self::Position,
+        size: Self::Size,
+    ) -> impl Stream<FallibleByteLender<B, Self::Error>> {
+        AsyncReadStreamer {
+            reader: self,
+            position,
+            bytes_to_read: size,
+            _phantom_data: PhantomData,
+        }
+    }
+}
+
 pub struct Buffer<T> {
     buffer: T,
     len: usize,
