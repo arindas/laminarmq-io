@@ -185,78 +185,78 @@ impl<F> GetObjectOutputFuture<F> {
     }
 }
 
-impl<F, E> Stream for GetObjectOutputFuture<F>
-where
-    F: Future<Output = Result<GetObjectOutput, E>>,
-    E: Error,
-{
-    type Item = Result<Bytes, AwsS3Error>;
-
-    async fn next(&mut self) -> Option<Self::Item> {
-        match match self.fut.take() {
-            Some(f) => f.await.map(|x| Some(x.body)),
-            None => Ok(None),
-        } {
-            Err(err) => return Some(Err(AwsS3Error::AwsSdkError(err.to_string()))),
-            Ok(Some(stream)) => {
-                self.byte_stream = stream;
-            }
-            _ => {}
-        }
-
-        self.byte_stream
-            .next()
-            .await
-            .map(|x| x.map_err(AwsS3Error::ByteStreamError))
-    }
-}
-
-impl<P> AwsS3BackedFile<P>
-where
-    P: PartMap,
-{
-    pub fn read_stream_at(
-        &mut self,
-        position: usize,
-        size: usize,
-    ) -> impl Stream<Item = Result<Bytes, AwsS3Error>> + '_ {
-        let first_part_idx = self
-            .part_size_map
-            .position_part_containing_offset(position)
-            .unwrap_or(self.part_size_map.len());
-
-        let get_object_output_future_iter = (first_part_idx..self.part_size_map.len())
-            .scan(
-                (position, size),
-                |(read_position, bytes_left_to_read), idx| {
-                    if *bytes_left_to_read <= zero() {
-                        return None;
-                    }
-
-                    let part = self.part_size_map.get_part_at_idx(idx)?;
-
-                    let range_start = max(*read_position, part.offset);
-
-                    let range_end = min(range_start + *bytes_left_to_read, part.end());
-
-                    *bytes_left_to_read -= range_end - range_start;
-
-                    Some((idx, range_start, range_end - 1))
-                },
-            )
-            .map(|(part_idx, range_start, range_end)| {
-                GetObjectOutputFuture::new(
-                    self.client
-                        .get_object()
-                        .bucket(&self.bucket)
-                        .key(format!("{}_{}.txt", &self.object_prefix, part_idx))
-                        .range(format!("bytes={}-{}", range_start, range_end))
-                        .send(),
-                )
-            });
-
-        stream::iter_chain(get_object_output_future_iter, || {
-            Ok::<_, AwsS3Error>(Bytes::from_static(&[]))
-        })
-    }
-}
+// impl<F, E> Stream for GetObjectOutputFuture<F>
+// where
+//     F: Future<Output = Result<GetObjectOutput, E>>,
+//     E: Error,
+// {
+//     type Item = Result<Bytes, AwsS3Error>;
+//
+//     async fn next(&mut self) -> Option<Self::Item> {
+//         match match self.fut.take() {
+//             Some(f) => f.await.map(|x| Some(x.body)),
+//             None => Ok(None),
+//         } {
+//             Err(err) => return Some(Err(AwsS3Error::AwsSdkError(err.to_string()))),
+//             Ok(Some(stream)) => {
+//                 self.byte_stream = stream;
+//             }
+//             _ => {}
+//         }
+//
+//         self.byte_stream
+//             .next()
+//             .await
+//             .map(|x| x.map_err(AwsS3Error::ByteStreamError))
+//     }
+// }
+//
+// impl<P> AwsS3BackedFile<P>
+// where
+//     P: PartMap,
+// {
+//     pub fn read_stream_at(
+//         &mut self,
+//         position: usize,
+//         size: usize,
+//     ) -> impl Stream<Item = Result<Bytes, AwsS3Error>> + '_ {
+//         let first_part_idx = self
+//             .part_size_map
+//             .position_part_containing_offset(position)
+//             .unwrap_or(self.part_size_map.len());
+//
+//         let get_object_output_future_iter = (first_part_idx..self.part_size_map.len())
+//             .scan(
+//                 (position, size),
+//                 |(read_position, bytes_left_to_read), idx| {
+//                     if *bytes_left_to_read <= zero() {
+//                         return None;
+//                     }
+//
+//                     let part = self.part_size_map.get_part_at_idx(idx)?;
+//
+//                     let range_start = max(*read_position, part.offset);
+//
+//                     let range_end = min(range_start + *bytes_left_to_read, part.end());
+//
+//                     *bytes_left_to_read -= range_end - range_start;
+//
+//                     Some((idx, range_start, range_end - 1))
+//                 },
+//             )
+//             .map(|(part_idx, range_start, range_end)| {
+//                 GetObjectOutputFuture::new(
+//                     self.client
+//                         .get_object()
+//                         .bucket(&self.bucket)
+//                         .key(format!("{}_{}.txt", &self.object_prefix, part_idx))
+//                         .range(format!("bytes={}-{}", range_start, range_end))
+//                         .send(),
+//                 )
+//             });
+//
+//         stream::iter_chain(get_object_output_future_iter, || {
+//             Ok::<_, AwsS3Error>(Bytes::from_static(&[]))
+//         })
+//     }
+// }
