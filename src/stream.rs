@@ -1,4 +1,4 @@
-use std::{marker::Unpin, ops::Deref};
+use std::marker::Unpin;
 
 use futures::{Future, Stream as FuturesStream, StreamExt};
 
@@ -70,53 +70,34 @@ pub fn chain<S1, S2>(stream1: S1, stream2: S2) -> Chain<S1, S2> {
     Chain(stream1, stream2)
 }
 
-pub struct IterChain<I, S> {
+pub struct IterChain<I, S, F> {
     iter: I,
     current_stream: S,
     proceed: bool,
+
+    delim_fn: F,
 }
 
-impl<I, S> IterChain<I, S>
+impl<I, S, F> IterChain<I, S, F>
 where
     S: Default,
 {
-    pub fn new(iter: I) -> Self {
+    pub fn new(iter: I, delim_fn: F) -> Self {
         Self {
             iter,
             current_stream: Default::default(),
             proceed: true,
+            delim_fn,
         }
     }
 }
 
-pub enum IterChainItem<T> {
-    Item(T),
-    Delim,
-}
-
-impl<T> Deref for IterChainItem<T>
-where
-    T: Deref<Target = [u8]>,
-{
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            IterChainItem::Item(x) => x.deref(),
-            IterChainItem::Delim => &[],
-        }
-    }
-}
-
-pub trait ZeroVal {
-    fn zero_val() -> Self;
-}
-
-impl<I, S> Stream for IterChain<I, S>
+impl<I, S, F, G> Stream for IterChain<I, S, F>
 where
     I: Iterator<Item = S>,
     S: Stream,
-    for<'x> S::Item<'x>: ZeroVal,
+    for<'x> F: FnOnce() -> G + Copy,
+    for<'x> G: Into<S::Item<'x>> + 'x,
 {
     type Item<'a> = S::Item<'a>
     where
@@ -132,18 +113,18 @@ where
 
         if x.is_none() {
             self.proceed = true;
-            Some(Self::Item::zero_val())
+            Some((self.delim_fn)().into())
         } else {
             x
         }
     }
 }
 
-pub fn iter_chain<I, S>(iter: I) -> IterChain<I, S>
+pub fn iter_chain<I, S, F>(iter: I, delim_fn: F) -> IterChain<I, S, F>
 where
     S: Default,
 {
-    IterChain::new(iter)
+    IterChain::new(iter, delim_fn)
 }
 
 pub struct Map<S, F> {
@@ -157,10 +138,10 @@ impl<S, F> Map<S, F> {
     }
 }
 
-impl<S, F, A, B> Stream for Map<S, F>
+impl<S, F, B> Stream for Map<S, F>
 where
-    for<'x> S: Stream<Item<'x> = A> + 'x,
-    F: FnMut(A) -> B,
+    S: Stream,
+    for<'x> F: FnMut(S::Item<'x>) -> B,
 {
     type Item<'a> = B
     where
@@ -177,7 +158,11 @@ where
     }
 }
 
-pub fn map<S, F>(stream: S, map_fn: F) -> Map<S, F> {
+pub fn map<S, F, B>(stream: S, map_fn: F) -> Map<S, F>
+where
+    S: Stream,
+    for<'x> F: FnMut(S::Item<'x>) -> B,
+{
     Map::new(stream, map_fn)
 }
 

@@ -1,7 +1,4 @@
-use crate::{
-    stream::{self, ZeroVal},
-    FallibleEntity, IntegerConversionError, SizedEntity, Stream, StreamRead,
-};
+use crate::{stream, FallibleEntity, IntegerConversionError, SizedEntity, Stream, StreamRead};
 use aws_sdk_s3::{
     operation::get_object::GetObjectOutput,
     primitives::{ByteStream, ByteStreamError},
@@ -231,12 +228,6 @@ where
     }
 }
 
-impl ZeroVal for Result<Bytes, AwsS3Error> {
-    fn zero_val() -> Self {
-        Ok(Bytes::from_static(&[]))
-    }
-}
-
 impl<P> StreamRead for AwsS3BackedFile<P>
 where
     P: PartMap,
@@ -289,6 +280,8 @@ where
                 )
             });
 
-        stream::iter_chain(get_object_output_future_iter)
+        stream::iter_chain(get_object_output_future_iter, || {
+            Ok::<_, AwsS3Error>(Bytes::from_static(&[]))
+        })
     }
 }
