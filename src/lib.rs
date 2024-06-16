@@ -233,11 +233,13 @@ where
 }
 
 pub trait StreamRead<B: ByteLender>: SizedEntity + FallibleEntity {
-    fn read_stream_at(
-        &mut self,
+    fn read_stream_at<'a>(
+        &'a mut self,
         position: Self::Position,
         size: Self::Size,
-    ) -> impl Stream<FallibleByteLender<B, Self::Error>>;
+    ) -> impl Stream<FallibleByteLender<B, Self::Error>> + 'a
+    where
+        B: 'a;
 }
 
 pub struct AsyncReadStreamer<'a, R, B, P, SZ> {
@@ -283,11 +285,14 @@ where
     R: AsyncRead<B>,
     B: ByteLender,
 {
-    fn read_stream_at(
-        &mut self,
+    fn read_stream_at<'a>(
+        &'a mut self,
         position: Self::Position,
         size: Self::Size,
-    ) -> impl Stream<FallibleByteLender<B, Self::Error>> {
+    ) -> impl Stream<FallibleByteLender<B, Self::Error>> + 'a
+    where
+        B: 'a,
+    {
         AsyncReadStreamer {
             reader: self,
             position,
