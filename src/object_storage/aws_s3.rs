@@ -1,4 +1,4 @@
-use crate::{stream, FallibleEntity, IntegerConversionError, SizedEntity, Stream, StreamRead};
+use crate::{stream, FallibleEntity, IntegerConversionError, SizedEntity, Stream};
 use aws_sdk_s3::{
     operation::get_object::GetObjectOutput,
     primitives::{ByteStream, ByteStreamError},
@@ -162,18 +162,6 @@ impl<P> FallibleEntity for AwsS3BackedFile<P> {
     type Error = AwsS3Error;
 }
 
-impl Stream for ByteStream {
-    type Item<'a> = Result<Bytes, AwsS3Error>
-    where
-        Self: 'a;
-
-    async fn next(&mut self) -> Option<Self::Item<'_>> {
-        self.next()
-            .await
-            .map(|x| x.map_err(AwsS3Error::ByteStreamError))
-    }
-}
-
 pub struct GetObjectOutputFuture<F> {
     fut: Option<F>,
     byte_stream: ByteStream,
@@ -202,49 +190,36 @@ where
     F: Future<Output = Result<GetObjectOutput, E>>,
     E: Error,
 {
-    type Item<'a> = Result<Bytes, AwsS3Error>
-    where
-        Self: 'a;
+    type Item = Result<Bytes, AwsS3Error>;
 
-    #[allow(clippy::manual_async_fn)]
-    fn next(&mut self) -> impl Future<Output = Option<Self::Item<'_>>> + '_ {
-        async {
-            match match self.fut.take() {
-                Some(f) => f.await.map(|x| Some(x.body)),
-                None => Ok(None),
-            } {
-                Err(err) => return Some(Err(AwsS3Error::AwsSdkError(err.to_string()))),
-                Ok(Some(stream)) => {
-                    self.byte_stream = stream;
-                }
-                _ => {}
+    async fn next(&mut self) -> Option<Self::Item> {
+        match match self.fut.take() {
+            Some(f) => f.await.map(|x| Some(x.body)),
+            None => Ok(None),
+        } {
+            Err(err) => return Some(Err(AwsS3Error::AwsSdkError(err.to_string()))),
+            Ok(Some(stream)) => {
+                self.byte_stream = stream;
             }
-
-            self.byte_stream
-                .next()
-                .await
-                .map(|x| x.map_err(AwsS3Error::ByteStreamError))
+            _ => {}
         }
+
+        self.byte_stream
+            .next()
+            .await
+            .map(|x| x.map_err(AwsS3Error::ByteStreamError))
     }
 }
 
-impl<P> StreamRead for AwsS3BackedFile<P>
+impl<P> AwsS3BackedFile<P>
 where
     P: PartMap,
 {
-    type ByteBuf<'a> = Bytes
-    where
-        Self: 'a;
-
-    fn read_stream_at<'a, 'b>(
-        &'a mut self,
-        position: Self::Position,
-        size: Self::Size,
-    ) -> impl Stream<Item<'b> = Result<Self::ByteBuf<'b>, Self::Error>>
-    where
-        Self: 'a,
-        'a: 'b,
-    {
+    pub fn read_stream_at(
+        &mut self,
+        position: usize,
+        size: usize,
+    ) -> impl Stream<Item = Result<Bytes, AwsS3Error>> + '_ {
         let first_part_idx = self
             .part_size_map
             .position_part_containing_offset(position)

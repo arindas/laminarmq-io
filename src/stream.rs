@@ -3,11 +3,9 @@ use std::marker::Unpin;
 use futures::{Future, Stream as FuturesStream, StreamExt};
 
 pub trait Stream {
-    type Item<'a>
-    where
-        Self: 'a;
+    type Item;
 
-    fn next(&mut self) -> impl Future<Output = Option<Self::Item<'_>>> + '_;
+    fn next(&mut self) -> impl Future<Output = Option<Self::Item>>;
 }
 
 pub struct WrappedStream<S>(S);
@@ -16,11 +14,9 @@ impl<S> Stream for WrappedStream<S>
 where
     S: FuturesStream + Unpin,
 {
-    type Item<'a> = S::Item
-    where
-        Self: 'a;
+    type Item = S::Item;
 
-    async fn next(&mut self) -> Option<Self::Item<'_>> {
+    async fn next(&mut self) -> Option<Self::Item> {
         self.0.next().await
     }
 }
@@ -38,11 +34,9 @@ pub fn once<T>(value: T) -> Once<T> {
 }
 
 impl<T> Stream for Once<T> {
-    type Item<'a> = T
-    where
-        Self: 'a;
+    type Item = T;
 
-    async fn next(&mut self) -> Option<Self::Item<'_>> {
+    async fn next(&mut self) -> Option<Self::Item> {
         self.0.take()
     }
 }
@@ -52,13 +46,11 @@ pub struct Chain<S1, S2>(S1, S2);
 impl<S1, S2> Stream for Chain<S1, S2>
 where
     S1: Stream,
-    for<'x> S2: Stream<Item<'x> = S1::Item<'x>> + 'x,
+    S2: Stream<Item = S1::Item>,
 {
-    type Item<'a> = S1::Item<'a>
-    where
-        Self: 'a;
+    type Item = S1::Item;
 
-    async fn next(&mut self) -> Option<Self::Item<'_>> {
+    async fn next(&mut self) -> Option<Self::Item> {
         match self.0.next().await {
             Some(x) => Some(x),
             None => self.1.next().await,
@@ -96,14 +88,12 @@ impl<I, S, F, G> Stream for IterChain<I, S, F>
 where
     I: Iterator<Item = S>,
     S: Stream,
-    for<'x> F: FnOnce() -> G + Copy,
-    for<'x> G: Into<S::Item<'x>> + 'x,
+    F: FnOnce() -> G + Copy,
+    G: Into<S::Item>,
 {
-    type Item<'a> = S::Item<'a>
-    where
-        Self: 'a;
+    type Item = S::Item;
 
-    async fn next(&mut self) -> Option<Self::Item<'_>> {
+    async fn next(&mut self) -> Option<Self::Item> {
         if self.proceed {
             self.current_stream = self.iter.next()?;
             self.proceed = false;
@@ -127,6 +117,36 @@ where
     IterChain::new(iter, delim_fn)
 }
 
+pub struct Map<S, F> {
+    stream: S,
+    map_fn: F,
+}
+
+impl<S, F> Map<S, F> {
+    pub fn new(stream: S, map_fn: F) -> Self {
+        Self { stream, map_fn }
+    }
+}
+
+impl<S, F, B> Stream for Map<S, F>
+where
+    S: Stream,
+    F: FnMut(S::Item) -> B,
+{
+    type Item = B;
+
+    async fn next(&mut self) -> Option<Self::Item> {
+        match self.stream.next().await {
+            Some(x) => Some((self.map_fn)(x)),
+            None => None,
+        }
+    }
+}
+
+pub fn map<S, F>(stream: S, map_fn: F) -> Map<S, F> {
+    Map::new(stream, map_fn)
+}
+
 pub struct Latch<S> {
     stream: S,
     latch_condition: bool,
@@ -145,15 +165,17 @@ impl<S> Stream for Latch<S>
 where
     S: Stream,
 {
-    type Item<'a> = S::Item<'a>
-    where
-        Self: 'a;
+    type Item = S::Item;
 
-    async fn next(&mut self) -> Option<Self::Item<'_>> {
+    async fn next(&mut self) -> Option<Self::Item> {
         if self.latch_condition {
             self.stream.next().await
         } else {
             None
         }
     }
+}
+
+pub fn latch<S>(stream: S, latch_condition: bool) -> Latch<S> {
+    Latch::new(stream, latch_condition)
 }
