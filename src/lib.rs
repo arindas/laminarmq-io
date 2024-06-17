@@ -1829,3 +1829,80 @@ where
         stream::chain(inner_stream, buffered_bytes)
     }
 }
+
+impl<R, AB> AsyncAppend for StreamReaderBufferedAppender<R, AB, R::Position, R::Size>
+where
+    R: AsyncAppend,
+    AB: DerefMut<Target = [u8]>,
+{
+    async fn append(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<AppendLocation<Self::Position, Self::Size>, Self::Error> {
+        enum AppendStrategy {
+            Inner,
+            Buffered,
+        }
+
+        enum Action {
+            Flush(AppendStrategy),
+            AppendBuffered,
+        }
+
+        struct AdvanceAnchor;
+
+        let append_strategy = match bytes.len() {
+            n if n >= self.append_buffer.capacity() => Action::Flush(AppendStrategy::Inner),
+            n if n >= self.append_buffer.avail_to_append() => {
+                Action::Flush(AppendStrategy::Buffered)
+            }
+            _ => Action::AppendBuffered,
+        };
+
+        let append_buffer_end = self
+            .append_buffer
+            .end_position()
+            .map_err(Self::Error::AppendBufferError)?;
+
+        match match match match append_strategy {
+            Action::AppendBuffered => (AppendStrategy::Buffered, Ok(())),
+            Action::Flush(strat) => (strat, self.flush().await),
+        } {
+            (AppendStrategy::Buffered, Ok(_)) => (
+                None,
+                self.append_buffer
+                    .append(bytes)
+                    .and_then(|x| {
+                        Ok(AppendLocation {
+                            write_position: append_buffer_end,
+                            write_len: R::Size::from_usize(x)
+                                .ok_or(BufferError::IntegerConversionError)?,
+                        })
+                    })
+                    .map_err(Self::Error::AppendBufferError),
+            ),
+            (AppendStrategy::Inner, Ok(_)) => (
+                Some(AdvanceAnchor),
+                self.inner
+                    .append(bytes)
+                    .await
+                    .map_err(Self::Error::AppendError),
+            ),
+            (_, Err(error)) => (None, Err(error)),
+        } {
+            (Some(AdvanceAnchor), Ok(append_location)) => self
+                .append_buffer
+                .advance_anchor_by(append_location.write_len)
+                .map_err(Self::Error::AppendBufferError)
+                .map(|_| append_location),
+            (_, result) => result,
+        } {
+            Ok(append_location) => {
+                self.size += append_location.write_len;
+                Ok(append_location)
+            }
+
+            Err(error) => Err(error),
+        }
+    }
+}
