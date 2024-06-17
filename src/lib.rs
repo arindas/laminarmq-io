@@ -1740,3 +1740,92 @@ where
         }
     }
 }
+
+pub struct StreamReaderBufferedAppenderByteLender<BL>(PhantomData<BL>);
+
+impl<BL> ByteLender for StreamReaderBufferedAppenderByteLender<BL>
+where
+    BL: ByteLender,
+{
+    type ByteBuf<'a> = StreamReaderBufferedAppenderByteBuf<'a, BL::ByteBuf<'a>>
+    where
+        Self: 'a;
+}
+
+struct AppendBufferBytes<'a> {
+    buffered_bytes: &'a [u8],
+    consumed: bool,
+}
+
+impl<'a> AppendBufferBytes<'a> {
+    fn new(buffered_bytes: &'a [u8]) -> Self {
+        Self {
+            buffered_bytes,
+            consumed: false,
+        }
+    }
+}
+
+impl<'x, RBL, E> Stream<FallibleByteLender<StreamReaderBufferedAppenderByteLender<RBL>, E>>
+    for AppendBufferBytes<'x>
+where
+    RBL: ByteLender,
+{
+    async fn next<'a>(
+        &'a mut self,
+    ) -> Option<
+        <FallibleByteLender<StreamReaderBufferedAppenderByteLender<RBL>, E> as Lender>::Item<'a>,
+    >
+    where
+        FallibleByteLender<StreamReaderBufferedAppenderByteLender<RBL>, E>: 'a,
+    {
+        if self.consumed {
+            None
+        } else {
+            self.consumed = true;
+            Some(Ok(StreamReaderBufferedAppenderByteBuf::Buffered(
+                self.buffered_bytes,
+            )))
+        }
+    }
+}
+
+impl<R, RBL, AB> StreamRead<StreamReaderBufferedAppenderByteLender<RBL>>
+    for StreamReaderBufferedAppender<R, AB, R::Position, R::Size>
+where
+    R: StreamRead<RBL>,
+    R::Error: 'static,
+    RBL: ByteLender + 'static,
+    AB: DerefMut<Target = [u8]>,
+{
+    fn read_stream_at<'a>(
+        &'a mut self,
+        position: Self::Position,
+        size: Self::Size,
+    ) -> impl Stream<FallibleByteLender<StreamReaderBufferedAppenderByteLender<RBL>, Self::Error>> + 'a
+    where
+        StreamReaderBufferedAppenderByteLender<RBL>: 'a,
+    {
+        let end = min(position + size.into(), self.size().into());
+
+        let inner_stream = stream::latch(
+            stream::map(self.inner.read_stream_at(position, size), |_: &(), a| {
+                a.map(StreamReaderBufferedAppenderByteBuf::Read)
+                    .map_err(StreamReaderBufferedAppenderError::ReadError)
+            }),
+            position < self.append_buffer.anchor_position(),
+        );
+
+        let append_buffer_read_size = end - self.append_buffer.anchor_position();
+        let append_buffer_read_bytes = self
+            .append_buffer
+            .read_at(
+                self.append_buffer.anchor_position(),
+                append_buffer_read_size,
+            )
+            .unwrap_or(&[]);
+        let buffered_bytes = AppendBufferBytes::new(append_buffer_read_bytes);
+
+        stream::chain(inner_stream, buffered_bytes)
+    }
+}

@@ -65,6 +65,19 @@ pub struct OnceRef<'a, T> {
     once_ref: &'a T,
 }
 
+impl<'a, T> OnceRef<'a, T> {
+    pub fn new(once_ref: &'a T) -> Self {
+        Self {
+            finished: false,
+            once_ref,
+        }
+    }
+}
+
+pub fn once_ref<T>(value_ref: &T) -> OnceRef<'_, T> {
+    OnceRef::new(value_ref)
+}
+
 impl<'x, T> Stream<RefOf<T>> for OnceRef<'x, T> {
     async fn next<'a>(&'a mut self) -> Option<<RefOf<T> as Lender>::Item<'a>>
     where
