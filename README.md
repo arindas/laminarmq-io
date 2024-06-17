@@ -42,7 +42,7 @@ all operations are exclusive. This library aims to remove the need for
 unnecessary internal locks in our I/O abstractions.
 
 This generality allows us to abstract over local file system based storage
-as well as object storage like AWS S3 with same API.
+as well as object storage like AWS S3 with the same API.
 
 ## License
 
