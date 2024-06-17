@@ -1,6 +1,7 @@
 # laminarmq-io
 
 [![rust-ci](https://github.com/arindas/laminarmq-io/workflows/rust-ci/badge.svg)](https://github.com/arindas/laminarmq-io/actions/workflows/rust-ci.yml)
+[![rustdoc](https://github.com/arindas/laminarmq-io/workflows/rustdoc/badge.svg)](https://github.com/arindas/laminarmq-io/actions/workflows/rustdoc.yml)
 
 An attempt to rewrite [`laminarmq`](https://github.com/arindas/laminarmq) I/O layer
 to acommodate capped/bounded memory overhead, both when reading and writing.
@@ -42,7 +43,7 @@ all operations are exclusive. This library aims to remove the need for
 unnecessary internal locks in our I/O abstractions.
 
 This generality allows us to abstract over local file system based storage
-as well as object storage like AWS S3 with same API.
+as well as object storage (like AWS S3) with the same API.
 
 ## License
 
