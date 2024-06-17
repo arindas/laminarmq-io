@@ -16,8 +16,7 @@ pub struct RandomRead;
 
 pub struct Seek;
 
-#[allow(unused)]
-pub struct TokioFile<K> {
+pub struct TokioFile<K, const FLUSH_ON_APPEND: bool = false> {
     inner: File,
     backing_file_path: PathBuf,
 
@@ -26,7 +25,7 @@ pub struct TokioFile<K> {
     _phantom_data: PhantomData<K>,
 }
 
-impl<K> TokioFile<K> {
+impl<K, const FA: bool> TokioFile<K, FA> {
     pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self, TokioFileError> {
         let backing_file_path = path.as_ref().to_path_buf();
 
@@ -54,7 +53,7 @@ impl<K> TokioFile<K> {
     }
 }
 
-impl<K> SizedEntity for TokioFile<K> {
+impl<K, const FA: bool> SizedEntity for TokioFile<K, FA> {
     type Position = u64;
 
     type Size = u64;
@@ -78,11 +77,11 @@ impl From<IntegerConversionError> for TokioFileError {
     }
 }
 
-impl<K> FallibleEntity for TokioFile<K> {
+impl<K, const FA: bool> FallibleEntity for TokioFile<K, FA> {
     type Error = TokioFileError;
 }
 
-impl<K> AsyncTruncate for TokioFile<K> {
+impl<K, const FA: bool> AsyncTruncate for TokioFile<K, FA> {
     async fn truncate(&mut self, position: Self::Position) -> Result<(), Self::Error> {
         self.inner.flush().await.map_err(Self::Error::IoError)?;
 
@@ -97,7 +96,7 @@ impl<K> AsyncTruncate for TokioFile<K> {
     }
 }
 
-impl<K> AsyncAppend for TokioFile<K> {
+impl<K, const FLUSH_ON_APPEND: bool> AsyncAppend for TokioFile<K, FLUSH_ON_APPEND> {
     async fn append(
         &mut self,
         bytes: &[u8],
@@ -112,7 +111,9 @@ impl<K> AsyncAppend for TokioFile<K> {
             .to_u64()
             .ok_or(Self::Error::IntegerConversionError)?;
 
-        self.inner.flush().await.map_err(Self::Error::IoError)?;
+        if FLUSH_ON_APPEND {
+            self.inner.flush().await.map_err(Self::Error::IoError)?;
+        }
 
         self.size += write_len;
 
@@ -123,7 +124,7 @@ impl<K> AsyncAppend for TokioFile<K> {
     }
 }
 
-impl AsyncBufRead for TokioFile<Seek> {
+impl AsyncBufRead for TokioFile<Seek, true> {
     async fn read_at_buf(
         &mut self,
         position: Self::Position,
@@ -152,7 +153,7 @@ impl AsyncBufRead for TokioFile<Seek> {
 }
 
 #[cfg(target_family = "unix")]
-impl AsyncBufRead for TokioFile<RandomRead> {
+impl AsyncBufRead for TokioFile<RandomRead, true> {
     async fn read_at_buf(
         &mut self,
         position: Self::Position,
@@ -183,7 +184,7 @@ impl AsyncBufRead for TokioFile<RandomRead> {
     }
 }
 
-impl<K> AsyncRemove for TokioFile<K> {
+impl<K, const FA: bool> AsyncRemove for TokioFile<K, FA> {
     async fn remove(self) -> Result<(), Self::Error> {
         tokio::fs::remove_file(self.backing_file_path)
             .await
@@ -191,7 +192,7 @@ impl<K> AsyncRemove for TokioFile<K> {
     }
 }
 
-impl<K> AsyncClose for TokioFile<K> {
+impl<K, const FA: bool> AsyncClose for TokioFile<K, FA> {
     async fn close(mut self) -> Result<(), Self::Error> {
         self.inner.flush().await.map_err(Self::Error::IoError)?;
 
