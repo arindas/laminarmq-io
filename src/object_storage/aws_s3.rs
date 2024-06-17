@@ -1,14 +1,17 @@
-use crate::{stream, FallibleEntity, IntegerConversionError, SizedEntity, Stream, StreamRead};
+use crate::{
+    stream::{self},
+    ByteLender, FallibleByteLender, FallibleEntity, IntegerConversionError, SizedEntity, Stream,
+    StreamRead,
+};
 use aws_sdk_s3::{
     operation::get_object::GetObjectOutput,
     primitives::{ByteStream, ByteStreamError},
     Client,
 };
 use bytes::Bytes;
-use futures::prelude::Future;
+use futures::{prelude::Future, FutureExt};
 use num::zero;
 use std::cmp::{max, min, Ordering};
-use std::error::Error;
 
 pub const PART_SIZE_MAP_KEY_SUFFIX: &str = "_part_size_map.txt";
 
@@ -162,18 +165,6 @@ impl<P> FallibleEntity for AwsS3BackedFile<P> {
     type Error = AwsS3Error;
 }
 
-impl Stream for ByteStream {
-    type Item<'a> = Result<Bytes, AwsS3Error>
-    where
-        Self: 'a;
-
-    async fn next(&mut self) -> Option<Self::Item<'_>> {
-        self.next()
-            .await
-            .map(|x| x.map_err(AwsS3Error::ByteStreamError))
-    }
-}
-
 pub struct GetObjectOutputFuture<F> {
     fut: Option<F>,
     byte_stream: ByteStream,
@@ -197,53 +188,53 @@ impl<F> GetObjectOutputFuture<F> {
     }
 }
 
-impl<F, E> Stream for GetObjectOutputFuture<F>
+impl<F> Stream<FallibleByteLender<AwsS3ByteLender, AwsS3Error>> for GetObjectOutputFuture<F>
 where
-    F: Future<Output = Result<GetObjectOutput, E>>,
-    E: Error,
+    F: Future<Output = Result<GetObjectOutput, String>>,
 {
-    type Item<'a> = Result<Bytes, AwsS3Error>
+    async fn next<'a>(
+        &'a mut self,
+    ) -> Option<<FallibleByteLender<AwsS3ByteLender, AwsS3Error> as stream::Lender>::Item<'a>>
     where
-        Self: 'a;
-
-    #[allow(clippy::manual_async_fn)]
-    fn next(&mut self) -> impl Future<Output = Option<Self::Item<'_>>> + '_ {
-        async {
-            match match self.fut.take() {
-                Some(f) => f.await.map(|x| Some(x.body)),
-                None => Ok(None),
-            } {
-                Err(err) => return Some(Err(AwsS3Error::AwsSdkError(err.to_string()))),
-                Ok(Some(stream)) => {
-                    self.byte_stream = stream;
-                }
-                _ => {}
+        FallibleByteLender<AwsS3ByteLender, AwsS3Error>: 'a,
+    {
+        match match self.fut.take() {
+            Some(f) => f.await.map(|x| Some(x.body)),
+            None => Ok(None),
+        } {
+            Err(err) => return Some(Err(AwsS3Error::AwsSdkError(err.to_string()))),
+            Ok(Some(stream)) => {
+                self.byte_stream = stream;
             }
-
-            self.byte_stream
-                .next()
-                .await
-                .map(|x| x.map_err(AwsS3Error::ByteStreamError))
+            _ => {}
         }
+
+        self.byte_stream
+            .next()
+            .await
+            .map(|x| x.map_err(AwsS3Error::ByteStreamError))
     }
 }
 
-impl<P> StreamRead for AwsS3BackedFile<P>
-where
-    P: PartMap,
-{
+pub struct AwsS3ByteLender;
+
+impl ByteLender for AwsS3ByteLender {
     type ByteBuf<'a> = Bytes
     where
         Self: 'a;
+}
 
-    fn read_stream_at<'a, 'b>(
+impl<P> StreamRead<AwsS3ByteLender> for AwsS3BackedFile<P>
+where
+    P: PartMap,
+{
+    fn read_stream_at<'a>(
         &'a mut self,
         position: Self::Position,
         size: Self::Size,
-    ) -> impl Stream<Item<'b> = Result<Self::ByteBuf<'b>, Self::Error>>
+    ) -> impl Stream<FallibleByteLender<AwsS3ByteLender, Self::Error>> + 'a
     where
-        Self: 'a,
-        'a: 'b,
+        AwsS3ByteLender: 'a,
     {
         let first_part_idx = self
             .part_size_map
@@ -276,12 +267,13 @@ where
                         .bucket(&self.bucket)
                         .key(format!("{}_{}.txt", &self.object_prefix, part_idx))
                         .range(format!("bytes={}-{}", range_start, range_end))
-                        .send(),
+                        .send()
+                        .map(|x| x.map_err(|err| err.to_string())),
                 )
             });
 
-        stream::iter_chain(get_object_output_future_iter, || {
-            Ok::<_, AwsS3Error>(Bytes::from_static(&[]))
+        stream::iter_chain(get_object_output_future_iter, |_: &()| {
+            Ok(Bytes::from_static(&[]))
         })
     }
 }

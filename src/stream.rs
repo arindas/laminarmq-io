@@ -1,64 +1,97 @@
-use std::marker::Unpin;
-
 use futures::{Future, Stream as FuturesStream, StreamExt};
+use std::marker::{PhantomData, Unpin};
 
-pub trait Stream {
+pub trait Lender {
     type Item<'a>
     where
         Self: 'a;
+}
 
-    fn next(&mut self) -> impl Future<Output = Option<Self::Item<'_>>> + '_;
+pub trait Stream<L: Lender> {
+    fn next<'a>(&'a mut self) -> impl Future<Output = Option<L::Item<'a>>> + 'a
+    where
+        L: 'a;
+}
+
+pub struct OwnedLender<T>(PhantomData<T>);
+
+impl<T> Lender for OwnedLender<T> {
+    type Item<'a> = T
+    where
+        Self: 'a;
 }
 
 pub struct WrappedStream<S>(S);
 
-impl<S> Stream for WrappedStream<S>
+impl<S> Stream<OwnedLender<S::Item>> for WrappedStream<S>
 where
     S: FuturesStream + Unpin,
 {
-    type Item<'a> = S::Item
+    fn next<'a>(
+        &'a mut self,
+    ) -> impl Future<Output = Option<<OwnedLender<S::Item> as Lender>::Item<'a>>> + 'a
     where
-        Self: 'a;
-
-    async fn next(&mut self) -> Option<Self::Item<'_>> {
-        self.0.next().await
+        OwnedLender<S::Item>: 'a,
+    {
+        self.0.next()
     }
 }
 
 pub struct Once<T>(Option<T>);
 
-impl<T> Once<T> {
-    pub fn new(value: T) -> Self {
-        Self(Some(value))
+impl<T> Stream<OwnedLender<T>> for Once<T> {
+    async fn next<'a>(&'a mut self) -> Option<<OwnedLender<T> as Lender>::Item<'a>>
+    where
+        OwnedLender<T>: 'a,
+    {
+        self.0.take()
     }
 }
 
 pub fn once<T>(value: T) -> Once<T> {
-    Once::new(value)
+    Once(Some(value))
 }
 
-impl<T> Stream for Once<T> {
-    type Item<'a> = T
+pub struct RefOf<T>(PhantomData<T>);
+
+impl<T> Lender for RefOf<T> {
+    type Item<'a> = &'a T
     where
         Self: 'a;
+}
 
-    async fn next(&mut self) -> Option<Self::Item<'_>> {
-        self.0.take()
+pub struct OnceRef<'a, T> {
+    finished: bool,
+    once_ref: &'a T,
+}
+
+impl<'x, T> Stream<RefOf<T>> for OnceRef<'x, T> {
+    async fn next<'a>(&'a mut self) -> Option<<RefOf<T> as Lender>::Item<'a>>
+    where
+        RefOf<T>: 'a,
+    {
+        if self.finished {
+            return None;
+        }
+
+        self.finished = true;
+
+        Some(self.once_ref)
     }
 }
 
 pub struct Chain<S1, S2>(S1, S2);
 
-impl<S1, S2> Stream for Chain<S1, S2>
+impl<S1, S2, L> Stream<L> for Chain<S1, S2>
 where
-    S1: Stream,
-    for<'x> S2: Stream<Item<'x> = S1::Item<'x>> + 'x,
+    S1: Stream<L>,
+    S2: Stream<L>,
+    L: Lender,
 {
-    type Item<'a> = S1::Item<'a>
+    async fn next<'a>(&'a mut self) -> Option<<L as Lender>::Item<'a>>
     where
-        Self: 'a;
-
-    async fn next(&mut self) -> Option<Self::Item<'_>> {
+        L: 'a,
+    {
         match self.0.next().await {
             Some(x) => Some(x),
             None => self.1.next().await,
@@ -92,18 +125,17 @@ where
     }
 }
 
-impl<I, S, F, G> Stream for IterChain<I, S, F>
+impl<I, S, F, L> Stream<L> for IterChain<I, S, F>
 where
     I: Iterator<Item = S>,
-    S: Stream,
-    for<'x> F: FnOnce() -> G + Copy,
-    for<'x> G: Into<S::Item<'x>> + 'x,
+    S: Stream<L>,
+    L: Lender,
+    F: FnOnce(&()) -> L::Item<'_> + Copy,
 {
-    type Item<'a> = S::Item<'a>
+    async fn next<'a>(&'a mut self) -> Option<<L as Lender>::Item<'a>>
     where
-        Self: 'a;
-
-    async fn next(&mut self) -> Option<Self::Item<'_>> {
+        L: 'a,
+    {
         if self.proceed {
             self.current_stream = self.iter.next()?;
             self.proceed = false;
@@ -113,7 +145,7 @@ where
 
         if x.is_none() {
             self.proceed = true;
-            Some((self.delim_fn)().into())
+            Some((self.delim_fn)(&()))
         } else {
             x
         }
@@ -127,41 +159,44 @@ where
     IterChain::new(iter, delim_fn)
 }
 
-pub struct Map<S, F> {
+pub struct Map<S, F, AL, BL> {
     stream: S,
     map_fn: F,
+
+    _phantom_data: PhantomData<(AL, BL)>,
 }
 
-impl<S, F> Map<S, F> {
+impl<S, F, AL, BL> Map<S, F, AL, BL> {
     pub fn new(stream: S, map_fn: F) -> Self {
-        Self { stream, map_fn }
-    }
-}
-
-impl<S, F, B> Stream for Map<S, F>
-where
-    S: Stream,
-    for<'x> F: FnMut(S::Item<'x>) -> B,
-{
-    type Item<'a> = B
-    where
-        Self: 'a;
-
-    #[allow(clippy::manual_async_fn)]
-    fn next(&mut self) -> impl Future<Output = Option<Self::Item<'_>>> + '_ {
-        async {
-            match self.stream.next().await {
-                Some(value) => Some((self.map_fn)(value)),
-                None => None,
-            }
+        Self {
+            stream,
+            map_fn,
+            _phantom_data: PhantomData,
         }
     }
 }
 
-pub fn map<S, F, B>(stream: S, map_fn: F) -> Map<S, F>
+impl<S, F, AL, BL> Stream<BL> for Map<S, F, AL, BL>
 where
-    S: Stream,
-    for<'x> F: FnMut(S::Item<'x>) -> B,
+    S: Stream<AL>,
+    AL: Lender,
+    BL: Lender,
+    F: for<'x> FnMut(&'x (), AL::Item<'x>) -> BL::Item<'x>,
+{
+    async fn next<'a>(&'a mut self) -> Option<<BL as Lender>::Item<'a>>
+    where
+        BL: 'a,
+    {
+        Some((self.map_fn)(&(), self.stream.next().await?))
+    }
+}
+
+pub fn map<S, F, AL, BL>(stream: S, map_fn: F) -> Map<S, F, AL, BL>
+where
+    S: Stream<AL>,
+    AL: Lender,
+    BL: Lender,
+    F: for<'x> FnMut(&'x (), AL::Item<'x>) -> BL::Item<'x>,
 {
     Map::new(stream, map_fn)
 }
@@ -180,19 +215,23 @@ impl<S> Latch<S> {
     }
 }
 
-impl<S> Stream for Latch<S>
+impl<S, L> Stream<L> for Latch<S>
 where
-    S: Stream,
+    S: Stream<L>,
+    L: Lender,
 {
-    type Item<'a> = S::Item<'a>
+    async fn next<'a>(&'a mut self) -> Option<<L as Lender>::Item<'a>>
     where
-        Self: 'a;
-
-    async fn next(&mut self) -> Option<Self::Item<'_>> {
+        L: 'a,
+    {
         if self.latch_condition {
             self.stream.next().await
         } else {
             None
         }
     }
+}
+
+pub fn latch<S>(stream: S, latch_condition: bool) -> Latch<S> {
+    Latch::new(stream, latch_condition)
 }
