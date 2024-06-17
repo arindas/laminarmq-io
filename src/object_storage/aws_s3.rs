@@ -1,7 +1,6 @@
 use crate::{
-    stream::{self},
-    ByteLender, FallibleByteLender, FallibleEntity, IntegerConversionError, SizedEntity, Stream,
-    StreamRead,
+    stream, AppendLocation, AsyncAppend, AsyncClose, AsyncRemove, AsyncTruncate, ByteLender,
+    FallibleByteLender, FallibleEntity, IntegerConversionError, SizedEntity, Stream, StreamRead,
 };
 use aws_sdk_s3::{
     operation::get_object::GetObjectOutput,
@@ -11,9 +10,13 @@ use aws_sdk_s3::{
 use bytes::Bytes;
 use futures::{prelude::Future, FutureExt};
 use num::zero;
-use std::cmp::{max, min, Ordering};
+use serde::{Deserialize, Serialize};
+use std::{
+    cmp::{max, min, Ordering},
+    iter,
+};
 
-pub const PART_SIZE_MAP_KEY_SUFFIX: &str = "_part_size_map.txt";
+pub const PART_SIZE_MAP_KEY_SUFFIX: &str = "_part_size_map.json";
 
 pub trait PartMap {
     fn position_part_containing_offset(&self, offset: usize) -> Option<usize>;
@@ -32,9 +35,17 @@ pub trait PartMap {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    fn truncate(&mut self, offset: usize) -> Option<(usize, usize, Part)>;
+
+    fn size(&self) -> usize {
+        self.get_part_at_idx(self.len() - 1)
+            .map(|p| p.end())
+            .unwrap_or(0)
+    }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct Part {
     pub offset: usize,
     pub size: usize,
@@ -77,8 +88,25 @@ impl PartMap for Vec<Part> {
     fn len(&self) -> usize {
         self.len()
     }
+
+    fn truncate(&mut self, offset: usize) -> Option<(usize, usize, Part)> {
+        let idx = self.position_part_containing_offset(offset)?;
+
+        let mut truncated_part = self.get_part_at_idx(idx)?;
+
+        let _ = self.split_off(idx);
+
+        let old_part_size = truncated_part.size;
+
+        truncated_part.size -= truncated_part.end() - offset;
+
+        self.push(truncated_part);
+
+        Some((idx, old_part_size, truncated_part))
+    }
 }
 
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct FixedPartSizeMap {
     part_size: usize,
     len: usize,
@@ -121,6 +149,15 @@ impl PartMap for FixedPartSizeMap {
     fn len(&self) -> usize {
         self.len
     }
+
+    fn truncate(&mut self, offset: usize) -> Option<(usize, usize, Part)> {
+        let idx = self.position_part_containing_offset(offset)?;
+
+        self.len = idx;
+
+        self.get_part_at_idx(self.len() - 1)
+            .map(|x| (self.len() - 1, self.part_size, x))
+    }
 }
 
 #[allow(unused)]
@@ -131,28 +168,76 @@ pub struct AwsS3BackedFile<P> {
     object_prefix: String,
 
     part_size_map: P,
-
-    size: usize,
 }
 
-impl<P> SizedEntity for AwsS3BackedFile<P> {
+impl<P> SizedEntity for AwsS3BackedFile<P>
+where
+    P: PartMap,
+{
     type Position = usize;
 
     type Size = usize;
 
     fn size(&self) -> Self::Size {
-        self.size
+        self.part_size_map.size()
     }
 }
 
 pub enum AwsS3Error {
-    InvalidOp,
+    NonEmptyPartMapUsedForInit,
 
     ByteStreamError(ByteStreamError),
 
     IntegerConversionError,
 
+    SerializationError(serde_json::Error),
+
     AwsSdkError(String),
+
+    PositionOutOfBounds,
+}
+
+impl<P> AwsS3BackedFile<P>
+where
+    P: for<'a> Deserialize<'a> + PartMap,
+{
+    pub async fn new(
+        aws_s3_client: Client,
+        bucket: String,
+        object_prefix: String,
+        empty_part_map: P,
+    ) -> Result<Self, AwsS3Error> {
+        if !empty_part_map.is_empty() {
+            return Err(AwsS3Error::NonEmptyPartMapUsedForInit);
+        }
+
+        let get_object_output = aws_s3_client
+            .get_object()
+            .bucket(&bucket)
+            .key(format!(
+                "{}_{}.txt",
+                &object_prefix, PART_SIZE_MAP_KEY_SUFFIX
+            ))
+            .send()
+            .await
+            .map_err(|err| AwsS3Error::AwsSdkError(err.to_string()))?;
+
+        let bytes = get_object_output
+            .body
+            .collect()
+            .await
+            .map_err(|err| AwsS3Error::AwsSdkError(err.to_string()))?
+            .into_bytes();
+
+        let part_size_map = serde_json::from_slice(&bytes).unwrap_or(empty_part_map);
+
+        Ok(Self {
+            client: aws_s3_client,
+            bucket,
+            object_prefix,
+            part_size_map,
+        })
+    }
 }
 
 impl From<IntegerConversionError> for AwsS3Error {
@@ -275,5 +360,132 @@ where
         stream::iter_chain(get_object_output_future_iter, |_: &()| {
             Ok(Bytes::from_static(&[]))
         })
+    }
+}
+
+impl<P> AsyncAppend for AwsS3BackedFile<P>
+where
+    P: PartMap + Serialize,
+{
+    async fn append(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<AppendLocation<Self::Position, Self::Size>, Self::Error> {
+        let part = self.part_size_map.append_part_with_part_size(bytes.len());
+
+        self.client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(format!(
+                "{}_{}.txt",
+                &self.object_prefix,
+                self.part_size_map.len() - 1
+            ))
+            .body(bytes.to_vec().into())
+            .send()
+            .await
+            .map_err(|err| AwsS3Error::AwsSdkError(err.to_string()))?;
+
+        self.client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(format!(
+                "{}_{}",
+                &self.object_prefix, PART_SIZE_MAP_KEY_SUFFIX
+            ))
+            .body(
+                serde_json::to_vec(&part)
+                    .map_err(AwsS3Error::SerializationError)?
+                    .into(),
+            )
+            .send()
+            .await
+            .map_err(|err| AwsS3Error::AwsSdkError(err.to_string()))?;
+
+        Ok(AppendLocation {
+            write_position: part.offset,
+            write_len: part.size,
+        })
+    }
+}
+
+impl<P> AsyncTruncate for AwsS3BackedFile<P>
+where
+    P: PartMap + Serialize,
+{
+    async fn truncate(&mut self, position: Self::Position) -> Result<(), Self::Error> {
+        let old_part_size_map_len = self.part_size_map.len();
+
+        let (last_part_idx, old_last_part_size, last_part_after_truncate) = self
+            .part_size_map
+            .truncate(position)
+            .ok_or(AwsS3Error::PositionOutOfBounds)?;
+
+        if old_last_part_size > last_part_after_truncate.size {
+            let get_object_output = self
+                .client
+                .get_object()
+                .bucket(&self.bucket)
+                .key(format!("{}_{}.txt", &self.object_prefix, last_part_idx))
+                .range(format!("bytes={}-{}", 0, last_part_after_truncate.size - 1))
+                .send()
+                .await
+                .map_err(|err| AwsS3Error::AwsSdkError(err.to_string()))?;
+
+            self.client
+                .put_object()
+                .bucket(&self.bucket)
+                .key(format!("{}_{}.txt", &self.object_prefix, last_part_idx))
+                .body(get_object_output.body)
+                .send()
+                .await
+                .map_err(|err| AwsS3Error::AwsSdkError(err.to_string()))?;
+        }
+
+        for part_idx in last_part_idx + 1..old_part_size_map_len {
+            self.client
+                .delete_object()
+                .bucket(&self.bucket)
+                .key(format!("{}_{}.txt", &self.object_prefix, part_idx))
+                .send()
+                .await
+                .map_err(|err| AwsS3Error::AwsSdkError(err.to_string()))?;
+        }
+
+        Ok(())
+    }
+}
+
+impl<P> AsyncRemove for AwsS3BackedFile<P> {
+    async fn remove(self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+impl<P> AsyncClose for AwsS3BackedFile<P>
+where
+    P: PartMap,
+{
+    async fn close(self) -> Result<(), Self::Error> {
+        let keys = iter::once(format!(
+            "{}_{}",
+            &self.object_prefix, PART_SIZE_MAP_KEY_SUFFIX
+        ))
+        .chain(
+            (0..self.part_size_map.len())
+                .map(|part_idx| format!("{}_{}.txt", &self.object_prefix, part_idx)),
+        );
+
+        for key in keys {
+            self.client
+                .delete_object()
+                .bucket(&self.bucket)
+                .key(key)
+                .send()
+                .await
+                .map_err(|err| AwsS3Error::AwsSdkError(err.to_string()))?;
+        }
+
+        Ok(())
     }
 }
