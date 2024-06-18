@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["PART_SIZE_MAP_KEY_SUFFIX"],"enum":["AwsS3Error"],"struct":["AwsS3BackedFile","AwsS3ByteLender","FixedPartSizeMap","GetObjectOutputFuture","Part"],"trait":["PartMap"]};
+window.SIDEBAR_ITEMS = {"constant":["PART_EXTENSION","PART_SIZE_MAP_KEY_SUFFIX"],"enum":["AwsS3Error"],"struct":["AwsS3BackedFile","AwsS3ByteLender","FixedPartSizeMap","GetObjectOutputFuture","Part"],"trait":["PartMap"]};
