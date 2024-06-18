@@ -12,226 +12,77 @@ use futures::{prelude::Future, FutureExt};
 use num::zero;
 use serde::{Deserialize, Serialize};
 use std::{
-    cmp::{max, min, Ordering},
+    cmp::{max, min},
     iter,
 };
+
+use crate::object_storage::PartMap;
 
 pub const PART_SIZE_MAP_KEY_SUFFIX: &str = "_part_size_map.json";
 
 pub const PART_EXTENSION: &str = "txt";
 
-pub trait PartMap {
-    fn position_part_containing_offset(&self, offset: usize) -> Option<usize>;
+async fn part_map_append_missing_parts_from<P>(
+    part_map: &mut P,
+    aws_s3_client: &Client,
+    bucket: &String,
+    object_prefix: &String,
+) -> Result<usize, AwsS3Error>
+where
+    P: PartMap,
+{
+    let mut parts_added = 0;
 
-    fn get_part_at_idx(&self, part_idx: usize) -> Option<Part>;
+    let part_suffix = format!(".{}", PART_EXTENSION);
 
-    fn get_part_containing_offset(&self, offset: usize) -> Option<Part> {
-        self.position_part_containing_offset(offset)
-            .and_then(|idx| self.get_part_at_idx(idx))
-    }
+    for object in aws_s3_client
+        .list_objects_v2()
+        .bucket(bucket)
+        .prefix(object_prefix)
+        .send()
+        .await
+        .map_err(|err| AwsS3Error::AwsSdkError(err.to_string()))?
+        .contents()
+    {
+        let key = object.key().unwrap_or("");
 
-    fn append_part_with_part_size(&mut self, part_size: usize) -> Part;
+        let object_size = object.size().unwrap_or(0);
 
-    fn len(&self) -> usize;
-
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    fn truncate(&mut self, offset: usize) -> Option<(usize, usize, Part)>;
-
-    fn size(&self) -> usize {
-        self.get_part_at_idx(self.len() - 1)
-            .map(|p| p.end())
-            .unwrap_or(0)
-    }
-
-    fn clear(&mut self);
-
-    fn append_missing_parts_from(
-        &mut self,
-        aws_s3_client: &Client,
-        bucket: &String,
-        object_prefix: &String,
-    ) -> impl std::future::Future<Output = Result<usize, AwsS3Error>> {
-        async move {
-            let mut parts_added = 0;
-
-            let part_suffix = format!(".{}", PART_EXTENSION);
-
-            for object in aws_s3_client
-                .list_objects_v2()
-                .bucket(bucket)
-                .prefix(object_prefix)
-                .send()
-                .await
-                .map_err(|err| AwsS3Error::AwsSdkError(err.to_string()))?
-                .contents()
-            {
-                let key = object.key().unwrap_or("");
-
-                let object_size = object.size().unwrap_or(0);
-
-                if !key.ends_with(&part_suffix) {
-                    continue;
-                }
-
-                let start = key.find('_').ok_or(AwsS3Error::ParseError(
-                    "Failed to find _ delim in part object key".to_string(),
-                ))? + 1;
-                let end = key.find('.').ok_or(AwsS3Error::ParseError(
-                    "Failed to find . delim in part object key".to_string(),
-                ))?;
-
-                if start >= end || end > key.len() {
-                    return Err(AwsS3Error::ParseError(
-                        "Invalid part_idx parse slice[] bounds".to_string(),
-                    ));
-                }
-
-                let part_idx: &usize = &key[start..end]
-                    .parse()
-                    .map_err(|_| AwsS3Error::ParseError("Failed parsing part idx".to_string()))?;
-
-                if *part_idx < self.len() {
-                    continue;
-                }
-
-                self.append_part_with_part_size(
-                    object_size
-                        .try_into()
-                        .map_err(|_| AwsS3Error::IntegerConversionError)?,
-                );
-
-                parts_added += 1;
-            }
-
-            Ok(parts_added)
+        if !key.ends_with(&part_suffix) {
+            continue;
         }
-    }
-}
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
-pub struct Part {
-    pub offset: usize,
-    pub size: usize,
-}
+        let start = key.find('_').ok_or(AwsS3Error::ParseError(
+            "Failed to find _ delim in part object key".to_string(),
+        ))? + 1;
+        let end = key.find('.').ok_or(AwsS3Error::ParseError(
+            "Failed to find . delim in part object key".to_string(),
+        ))?;
 
-impl Part {
-    pub fn end(&self) -> usize {
-        self.offset + self.size
-    }
-}
+        if start >= end || end > key.len() {
+            return Err(AwsS3Error::ParseError(
+                "Invalid part_idx parse slice[] bounds".to_string(),
+            ));
+        }
 
-impl PartMap for Vec<Part> {
-    fn position_part_containing_offset(&self, offset: usize) -> Option<usize> {
-        self.binary_search_by(|part| match part.offset.cmp(&offset) {
-            Ordering::Less if offset < part.end() => Ordering::Equal,
-            Ordering::Less => Ordering::Less,
-            Ordering::Equal => Ordering::Equal,
-            Ordering::Greater => Ordering::Greater,
-        })
-        .ok()
-    }
+        let part_idx: &usize = &key[start..end]
+            .parse()
+            .map_err(|_| AwsS3Error::ParseError("Failed parsing part idx".to_string()))?;
 
-    fn get_part_at_idx(&self, part_idx: usize) -> Option<Part> {
-        self.get(part_idx).cloned()
-    }
+        if *part_idx < part_map.len() {
+            continue;
+        }
 
-    fn append_part_with_part_size(&mut self, part_size: usize) -> Part {
-        let offset = self.last().map_or(0, |x| x.end());
+        part_map.append_part_with_part_size(
+            object_size
+                .try_into()
+                .map_err(|_| AwsS3Error::IntegerConversionError)?,
+        );
 
-        let part = Part {
-            offset,
-            size: part_size,
-        };
-
-        self.push(part);
-
-        part
+        parts_added += 1;
     }
 
-    fn len(&self) -> usize {
-        self.len()
-    }
-
-    fn truncate(&mut self, offset: usize) -> Option<(usize, usize, Part)> {
-        let idx = self.position_part_containing_offset(offset)?;
-
-        let mut truncated_part = self.get_part_at_idx(idx)?;
-
-        let _ = self.split_off(idx);
-
-        let old_part_size = truncated_part.size;
-
-        truncated_part.size -= truncated_part.end() - offset;
-
-        self.push(truncated_part);
-
-        Some((idx, old_part_size, truncated_part))
-    }
-
-    fn clear(&mut self) {
-        self.clear()
-    }
-}
-
-#[derive(Clone, Copy, Serialize, Deserialize)]
-pub struct FixedPartSizeMap {
-    part_size: usize,
-    len: usize,
-}
-
-impl PartMap for FixedPartSizeMap {
-    fn position_part_containing_offset(&self, offset: usize) -> Option<usize> {
-        let part_idx = offset / self.part_size;
-
-        (part_idx < self.len).then_some(part_idx)
-    }
-
-    fn get_part_at_idx(&self, part_idx: usize) -> Option<Part> {
-        (part_idx < self.len).then_some(Part {
-            offset: part_idx * self.part_size,
-            size: self.part_size,
-        })
-    }
-
-    fn get_part_containing_offset(&self, offset: usize) -> Option<Part> {
-        let part_idx = offset / self.part_size;
-
-        (part_idx < self.len).then_some(Part {
-            offset: part_idx * self.part_size,
-            size: self.part_size,
-        })
-    }
-
-    fn append_part_with_part_size(&mut self, _: usize) -> Part {
-        let part = Part {
-            offset: self.len * self.part_size,
-            size: self.part_size,
-        };
-
-        self.len += 1;
-
-        part
-    }
-
-    fn len(&self) -> usize {
-        self.len
-    }
-
-    fn truncate(&mut self, offset: usize) -> Option<(usize, usize, Part)> {
-        let idx = self.position_part_containing_offset(offset)?;
-
-        self.len = idx;
-
-        self.get_part_at_idx(self.len() - 1)
-            .map(|x| (self.len() - 1, self.part_size, x))
-    }
-
-    fn clear(&mut self) {
-        self.len = 0
-    }
+    Ok(parts_added)
 }
 
 #[allow(unused)]
@@ -306,9 +157,13 @@ where
             fallback_part_map
         };
 
-        part_size_map
-            .append_missing_parts_from(&aws_s3_client, &bucket, &object_prefix)
-            .await?;
+        part_map_append_missing_parts_from(
+            &mut part_size_map,
+            &aws_s3_client,
+            &bucket,
+            &object_prefix,
+        )
+        .await?;
 
         Ok(Self {
             client: aws_s3_client,
