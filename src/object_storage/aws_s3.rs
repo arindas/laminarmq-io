@@ -302,7 +302,7 @@ where
 
 impl<P> AsyncAppend for AwsS3BackedFile<P>
 where
-    P: PartMap + Serialize,
+    P: PartMap,
 {
     async fn append(
         &mut self,
@@ -319,22 +319,6 @@ where
                 self.part_size_map.len() - 1
             ))
             .body(bytes.to_vec().into())
-            .send()
-            .await
-            .map_err(|err| AwsS3Error::AwsSdkError(err.to_string()))?;
-
-        self.client
-            .put_object()
-            .bucket(&self.bucket)
-            .key(format!(
-                "{}_{}",
-                &self.object_prefix, PART_SIZE_MAP_KEY_SUFFIX
-            ))
-            .body(
-                serde_json::to_vec(&part)
-                    .map_err(AwsS3Error::SerializationError)?
-                    .into(),
-            )
             .send()
             .await
             .map_err(|err| AwsS3Error::AwsSdkError(err.to_string()))?;
@@ -393,17 +377,11 @@ where
     }
 }
 
-impl<P> AsyncRemove for AwsS3BackedFile<P> {
-    async fn remove(self) -> Result<(), Self::Error> {
-        Ok(())
-    }
-}
-
-impl<P> AsyncClose for AwsS3BackedFile<P>
+impl<P> AsyncRemove for AwsS3BackedFile<P>
 where
     P: PartMap,
 {
-    async fn close(self) -> Result<(), Self::Error> {
+    async fn remove(self) -> Result<(), Self::Error> {
         let keys = iter::once(format!(
             "{}_{}",
             &self.object_prefix, PART_SIZE_MAP_KEY_SUFFIX
@@ -422,6 +400,42 @@ where
                 .await
                 .map_err(|err| AwsS3Error::AwsSdkError(err.to_string()))?;
         }
+
+        Ok(())
+    }
+}
+
+impl<P> AwsS3BackedFile<P>
+where
+    P: Serialize,
+{
+    async fn flush(&self) -> Result<(), AwsS3Error> {
+        self.client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(format!(
+                "{}_{}",
+                &self.object_prefix, PART_SIZE_MAP_KEY_SUFFIX
+            ))
+            .body(
+                serde_json::to_vec(&self.part_size_map)
+                    .map_err(AwsS3Error::SerializationError)?
+                    .into(),
+            )
+            .send()
+            .await
+            .map_err(|put_error| put_error.to_string())
+            .map_err(AwsS3Error::AwsSdkError)
+            .map(|_| ())
+    }
+}
+
+impl<P> AsyncClose for AwsS3BackedFile<P>
+where
+    P: Serialize,
+{
+    async fn close(self) -> Result<(), Self::Error> {
+        self.flush().await?;
 
         Ok(())
     }
