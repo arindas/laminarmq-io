@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["aws_s3"]};
+window.SIDEBAR_ITEMS = {"mod":["aws_s3"],"struct":["FixedPartSizeMap","Part"],"trait":["PartMap"]};
