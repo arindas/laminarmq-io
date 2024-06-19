@@ -22,15 +22,12 @@ pub const PART_SIZE_MAP_KEY_SUFFIX: &str = "_part_size_map.json";
 
 pub const PART_EXTENSION: &str = "txt";
 
-async fn part_map_append_missing_parts_from<P>(
+async fn part_map_append_missing_parts_from_aws_s3<P: PartMap>(
     part_map: &mut P,
     aws_s3_client: &Client,
     bucket: &String,
     object_prefix: &String,
-) -> Result<usize, AwsS3Error>
-where
-    P: PartMap,
-{
+) -> Result<usize, AwsS3Error> {
     let mut parts_added = 0;
 
     let part_suffix = format!(".{}", PART_EXTENSION);
@@ -157,7 +154,7 @@ where
             fallback_part_map
         };
 
-        part_map_append_missing_parts_from(
+        part_map_append_missing_parts_from_aws_s3(
             &mut part_size_map,
             &aws_s3_client,
             &bucket,
