@@ -439,9 +439,6 @@
 <a href="#437" id="437">437</a>
 <a href="#438" id="438">438</a>
 <a href="#439" id="439">439</a>
-<a href="#440" id="440">440</a>
-<a href="#441" id="441">441</a>
-<a href="#442" id="442">442</a>
 </pre></div><pre class="rust"><code><span class="kw">use crate</span>::{
     stream, AppendLocation, AsyncAppend, AsyncClose, AsyncRemove, AsyncTruncate, ByteLender,
     FallibleByteLender, FallibleEntity, IntegerConversionError, SizedEntity, Stream, StreamRead,
@@ -466,15 +463,12 @@
 
 <span class="kw">pub const </span>PART_EXTENSION: <span class="kw-2">&amp;</span>str = <span class="string">"txt"</span>;
 
-<span class="kw">async fn </span>part_map_append_missing_parts_from&lt;P&gt;(
+<span class="kw">async fn </span>part_map_append_missing_parts_from_aws_s3&lt;P: PartMap&gt;(
     part_map: <span class="kw-2">&amp;mut </span>P,
     aws_s3_client: <span class="kw-2">&amp;</span>Client,
     bucket: <span class="kw-2">&amp;</span>String,
     object_prefix: <span class="kw-2">&amp;</span>String,
-) -&gt; <span class="prelude-ty">Result</span>&lt;usize, AwsS3Error&gt;
-<span class="kw">where
-    </span>P: PartMap,
-{
+) -&gt; <span class="prelude-ty">Result</span>&lt;usize, AwsS3Error&gt; {
     <span class="kw">let </span><span class="kw-2">mut </span>parts_added = <span class="number">0</span>;
 
     <span class="kw">let </span>part_suffix = <span class="macro">format!</span>(<span class="string">".{}"</span>, PART_EXTENSION);
@@ -601,7 +595,7 @@
             fallback_part_map
         };
 
-        part_map_append_missing_parts_from(
+        part_map_append_missing_parts_from_aws_s3(
             <span class="kw-2">&amp;mut </span>part_size_map,
             <span class="kw-2">&amp;</span>aws_s3_client,
             <span class="kw-2">&amp;</span>bucket,
