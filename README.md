@@ -24,6 +24,7 @@ This crate provides the following traits:
 - `StreamRead`
 - `AsyncAppend`
 - `AsyncTruncate`
+- `StreamAppend`
 - `AsyncRemove`
 - `AsyncClose`
 
@@ -47,4 +48,5 @@ as well as object storage (like AWS S3) with the same API.
 
 ## License
 
-This repository is licensed under the same terms as [`laminarmq`](https://github.com/arindas/laminarmq)
+This repository is licensed under the same terms as [`laminarmq`](https://github.com/arindas/laminarmq).
+See [LICENSE](https://raw.githubusercontent.com/arindas/laminarmq-io/main/LICENSE) for more details.

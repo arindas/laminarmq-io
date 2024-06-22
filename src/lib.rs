@@ -90,51 +90,62 @@ pub trait AsyncAppend: SizedEntity + FallibleEntity {
     ) -> impl Future<Output = Result<AppendLocation<Self::Position, Self::Size>, Self::Error>>;
 }
 
-pub enum AsyncStreamAppendError<E> {
+pub enum StreamAppendError<E, XE> {
     AppendOverflow,
-    StreamReadError,
-    TruncateError(E),
-    AppendError(E),
-    IntegerConversionError,
+    StreamReadError(XE),
+    InnerError(E),
 }
 
-pub struct AsyncStreamAppend<'a, A>(&'a mut A);
+pub trait StreamAppend: SizedEntity + FallibleEntity {
+    fn append_stream<XBuf, XE, X>(
+        &mut self,
+        stream: &mut X,
+        append_threshold: Option<Self::Size>,
+    ) -> impl Future<
+        Output = Result<
+            AppendLocation<Self::Position, Self::Size>,
+            StreamAppendError<Self::Error, XE>,
+        >,
+    >
+    where
+        XBuf: Deref<Target = [u8]>,
+        X: Stream<OwnedLender<Result<XBuf, XE>>>,
+        X: Unpin;
+}
 
-impl<'a, A> AsyncStreamAppend<'a, A>
+impl<A> StreamAppend for A
 where
     A: AsyncAppend + AsyncTruncate,
 {
-    pub async fn append_stream<XBuf, XE, X>(
-        self,
+    async fn append_stream<XBuf, XE, X>(
+        &mut self,
         stream: &mut X,
-        append_stream_threshold: Option<A::Size>,
-    ) -> Result<AppendLocation<A::Position, A::Size>, AsyncStreamAppendError<A::Error>>
+        append_threshold: Option<Self::Size>,
+    ) -> Result<AppendLocation<Self::Position, Self::Size>, StreamAppendError<Self::Error, XE>>
     where
         XBuf: Deref<Target = [u8]>,
         X: Stream<OwnedLender<Result<XBuf, XE>>> + Unpin,
     {
-        let file = self.0;
-
-        let (mut bytes_written, write_position) = (zero(), file.size().into());
-
+        let (mut bytes_written, write_position) = (zero(), self.size().into());
         while let Some(buf) = stream.next().await {
-            match match match (buf, append_stream_threshold) {
+            match match match (buf, append_threshold) {
                 (Ok(buf), Some(thresh))
                     if (bytes_written
-                        + A::Size::from_usize(buf.len())
-                            .ok_or(AsyncStreamAppendError::IntegerConversionError)?)
+                        + A::Size::from_usize(buf.len()).ok_or(
+                            StreamAppendError::InnerError(IntegerConversionError.into()),
+                        )?)
                         <= thresh =>
                 {
                     Ok(buf)
                 }
-                (Ok(_), Some(_)) => Err(AsyncStreamAppendError::AppendOverflow),
+                (Ok(_), Some(_)) => Err(StreamAppendError::AppendOverflow),
                 (Ok(buf), None) => Ok(buf),
-                (Err(_), _) => Err(AsyncStreamAppendError::StreamReadError),
+                (Err(err), _) => Err(StreamAppendError::StreamReadError(err)),
             } {
-                Ok(buf) => file
+                Ok(buf) => self
                     .append(buf.deref())
                     .await
-                    .map_err(AsyncStreamAppendError::AppendError),
+                    .map_err(StreamAppendError::InnerError),
                 Err(error) => Err(error),
             } {
                 Ok(AppendLocation {
@@ -143,10 +154,10 @@ where
                 }) => bytes_written += write_len,
 
                 Err(error) => {
-                    return file
+                    return self
                         .truncate(write_position)
                         .await
-                        .map_err(AsyncStreamAppendError::TruncateError)
+                        .map_err(StreamAppendError::InnerError)
                         .and_then(|_| Err(error))
                 }
             }
