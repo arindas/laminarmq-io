@@ -1,6 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/lib.rs`."><title>lib.rs - source</title><script> if (window.location.protocol !== "file:") document.write(`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceSerif4-Regular-46f98efaafac5295.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/FiraSans-Regular-018c141bf0843ffd.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/FiraSans-Medium-8f9a781e4970d388.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2">`)</script><link rel="stylesheet" href="../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../static.files/rustdoc-e935ef01ae1c1829.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="laminarmq_io" data-themes="" data-resource-suffix="" data-rustdoc-version="1.78.0 (9b00956e5 2024-04-29)" data-channel="1.78.0" data-search-js="search-42d8da7a6b9792c2.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../static.files/storage-4c98445ec4002617.js"></script><script defer src="../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-12cf3b4f4f9dc36d.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-04d5337699b92874.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-16x16-8b506e7a72182f1c.png"><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title">
-            <h2>Files</h2></div></nav><div class="sidebar-resizer"></div>
-    <main><nav class="sub"><form class="search-form"><span></span><div id="sidebar-button" tabindex="-1"><a href="../../laminarmq_io/all.html" title="show sidebar"></a></div><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"><div id="help-button" tabindex="-1"><a href="../../help.html" title="help">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../settings.html" title="settings"><img width="22" height="22" alt="Change settings" src="../../static.files/wheel-7b819b6101059cd0.svg"></a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/lib.rs`."><title>lib.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../static.files/rustdoc-081576b923113409.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="laminarmq_io" data-themes="" data-resource-suffix="" data-rustdoc-version="1.79.0 (129f3b996 2024-06-10)" data-channel="1.79.0" data-search-js="search-bf21c90c8c1d92b1.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../static.files/storage-e32f0c247825364d.js"></script><script defer src="../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-20a3ad099b048cf2.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-09095024cf37855e.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><nav class="sub"><form class="search-form"><span></span><div id="sidebar-button" tabindex="-1"><a href="../../laminarmq_io/all.html" title="show sidebar"></a></div><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Type ‘S’ or ‘/’ to search, ‘?’ for more options…" type="search"><div id="help-button" tabindex="-1"><a href="../../help.html" title="help">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../settings.html" title="settings">Settings</a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
 <a href="#4" id="4">4</a>
@@ -1908,6 +1906,17 @@
 <a href="#1906" id="1906">1906</a>
 <a href="#1907" id="1907">1907</a>
 <a href="#1908" id="1908">1908</a>
+<a href="#1909" id="1909">1909</a>
+<a href="#1910" id="1910">1910</a>
+<a href="#1911" id="1911">1911</a>
+<a href="#1912" id="1912">1912</a>
+<a href="#1913" id="1913">1913</a>
+<a href="#1914" id="1914">1914</a>
+<a href="#1915" id="1915">1915</a>
+<a href="#1916" id="1916">1916</a>
+<a href="#1917" id="1917">1917</a>
+<a href="#1918" id="1918">1918</a>
+<a href="#1919" id="1919">1919</a>
 </pre></div><pre class="rust"><code><span class="kw">pub mod </span>fs;
 <span class="kw">pub mod </span>object_storage;
 <span class="kw">pub mod </span>stream;
@@ -2000,51 +2009,62 @@
     ) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;AppendLocation&lt;<span class="self">Self</span>::Position, <span class="self">Self</span>::Size&gt;, <span class="self">Self</span>::Error&gt;&gt;;
 }
 
-<span class="kw">pub enum </span>AsyncStreamAppendError&lt;E&gt; {
+<span class="kw">pub enum </span>StreamAppendError&lt;E, XE&gt; {
     AppendOverflow,
-    StreamReadError,
-    TruncateError(E),
-    AppendError(E),
-    IntegerConversionError,
+    StreamReadError(XE),
+    InnerError(E),
 }
 
-<span class="kw">pub struct </span>AsyncStreamAppend&lt;<span class="lifetime">'a</span>, A&gt;(<span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>A);
+<span class="kw">pub trait </span>StreamAppend: SizedEntity + FallibleEntity {
+    <span class="kw">fn </span>append_stream&lt;XBuf, XE, X&gt;(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        stream: <span class="kw-2">&amp;mut </span>X,
+        append_threshold: <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Size&gt;,
+    ) -&gt; <span class="kw">impl </span>Future&lt;
+        Output = <span class="prelude-ty">Result</span>&lt;
+            AppendLocation&lt;<span class="self">Self</span>::Position, <span class="self">Self</span>::Size&gt;,
+            StreamAppendError&lt;<span class="self">Self</span>::Error, XE&gt;,
+        &gt;,
+    &gt;
+    <span class="kw">where
+        </span>XBuf: Deref&lt;Target = [u8]&gt;,
+        X: Stream&lt;OwnedLender&lt;<span class="prelude-ty">Result</span>&lt;XBuf, XE&gt;&gt;&gt;,
+        X: Unpin;
+}
 
-<span class="kw">impl</span>&lt;<span class="lifetime">'a</span>, A&gt; AsyncStreamAppend&lt;<span class="lifetime">'a</span>, A&gt;
+<span class="kw">impl</span>&lt;A&gt; StreamAppend <span class="kw">for </span>A
 <span class="kw">where
     </span>A: AsyncAppend + AsyncTruncate,
 {
-    <span class="kw">pub async fn </span>append_stream&lt;XBuf, XE, X&gt;(
-        <span class="self">self</span>,
+    <span class="kw">async fn </span>append_stream&lt;XBuf, XE, X&gt;(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         stream: <span class="kw-2">&amp;mut </span>X,
-        append_stream_threshold: <span class="prelude-ty">Option</span>&lt;A::Size&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;AppendLocation&lt;A::Position, A::Size&gt;, AsyncStreamAppendError&lt;A::Error&gt;&gt;
+        append_threshold: <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Size&gt;,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;AppendLocation&lt;<span class="self">Self</span>::Position, <span class="self">Self</span>::Size&gt;, StreamAppendError&lt;<span class="self">Self</span>::Error, XE&gt;&gt;
     <span class="kw">where
         </span>XBuf: Deref&lt;Target = [u8]&gt;,
         X: Stream&lt;OwnedLender&lt;<span class="prelude-ty">Result</span>&lt;XBuf, XE&gt;&gt;&gt; + Unpin,
     {
-        <span class="kw">let </span>file = <span class="self">self</span>.<span class="number">0</span>;
-
-        <span class="kw">let </span>(<span class="kw-2">mut </span>bytes_written, write_position) = (zero(), file.size().into());
-
+        <span class="kw">let </span>(<span class="kw-2">mut </span>bytes_written, write_position) = (zero(), <span class="self">self</span>.size().into());
         <span class="kw">while let </span><span class="prelude-val">Some</span>(buf) = stream.next().<span class="kw">await </span>{
-            <span class="kw">match match match </span>(buf, append_stream_threshold) {
+            <span class="kw">match match match </span>(buf, append_threshold) {
                 (<span class="prelude-val">Ok</span>(buf), <span class="prelude-val">Some</span>(thresh))
                     <span class="kw">if </span>(bytes_written
-                        + A::Size::from_usize(buf.len())
-                            .ok_or(AsyncStreamAppendError::IntegerConversionError)<span class="question-mark">?</span>)
+                        + A::Size::from_usize(buf.len()).ok_or(
+                            StreamAppendError::InnerError(IntegerConversionError.into()),
+                        )<span class="question-mark">?</span>)
                         &lt;= thresh =&gt;
                 {
                     <span class="prelude-val">Ok</span>(buf)
                 }
-                (<span class="prelude-val">Ok</span>(<span class="kw">_</span>), <span class="prelude-val">Some</span>(<span class="kw">_</span>)) =&gt; <span class="prelude-val">Err</span>(AsyncStreamAppendError::AppendOverflow),
+                (<span class="prelude-val">Ok</span>(<span class="kw">_</span>), <span class="prelude-val">Some</span>(<span class="kw">_</span>)) =&gt; <span class="prelude-val">Err</span>(StreamAppendError::AppendOverflow),
                 (<span class="prelude-val">Ok</span>(buf), <span class="prelude-val">None</span>) =&gt; <span class="prelude-val">Ok</span>(buf),
-                (<span class="prelude-val">Err</span>(<span class="kw">_</span>), <span class="kw">_</span>) =&gt; <span class="prelude-val">Err</span>(AsyncStreamAppendError::StreamReadError),
+                (<span class="prelude-val">Err</span>(err), <span class="kw">_</span>) =&gt; <span class="prelude-val">Err</span>(StreamAppendError::StreamReadError(err)),
             } {
-                <span class="prelude-val">Ok</span>(buf) =&gt; file
-                    .append(buf.deref())
+                <span class="prelude-val">Ok</span>(buf) =&gt; <span class="self">self
+                    </span>.append(buf.deref())
                     .<span class="kw">await
-                    </span>.map_err(AsyncStreamAppendError::AppendError),
+                    </span>.map_err(StreamAppendError::InnerError),
                 <span class="prelude-val">Err</span>(error) =&gt; <span class="prelude-val">Err</span>(error),
             } {
                 <span class="prelude-val">Ok</span>(AppendLocation {
@@ -2053,10 +2073,10 @@
                 }) =&gt; bytes_written += write_len,
 
                 <span class="prelude-val">Err</span>(error) =&gt; {
-                    <span class="kw">return </span>file
-                        .truncate(write_position)
+                    <span class="kw">return </span><span class="self">self
+                        </span>.truncate(write_position)
                         .<span class="kw">await
-                        </span>.map_err(AsyncStreamAppendError::TruncateError)
+                        </span>.map_err(StreamAppendError::InnerError)
                         .and_then(|<span class="kw">_</span>| <span class="prelude-val">Err</span>(error))
                 }
             }
