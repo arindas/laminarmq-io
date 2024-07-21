@@ -132,10 +132,7 @@ where
         let get_object_output = aws_s3_client
             .get_object()
             .bucket(&bucket)
-            .key(format!(
-                "{}_{}.txt",
-                &object_prefix, PART_SIZE_MAP_KEY_SUFFIX
-            ))
+            .key(format!("{}{}", &object_prefix, PART_SIZE_MAP_KEY_SUFFIX))
             .send()
             .await
             .map_err(|err| AwsS3Error::AwsSdkError(err.to_string()))?;
@@ -261,17 +258,21 @@ where
             .scan(
                 (position, size),
                 |(read_position, bytes_left_to_read), idx| {
-                    if *bytes_left_to_read <= zero() {
+                    let part = self.part_size_map.get_part_at_idx(idx)?;
+
+                    if *bytes_left_to_read <= zero() || *read_position >= part.end() {
                         return None;
                     }
-
-                    let part = self.part_size_map.get_part_at_idx(idx)?;
 
                     let range_start = max(*read_position, part.offset);
 
                     let range_end = min(range_start + *bytes_left_to_read, part.end());
 
                     *bytes_left_to_read -= range_end - range_start;
+
+                    // normalize range to [0, part.size)
+                    let range_start = range_start - part.offset;
+                    let range_end = range_end - part.offset;
 
                     Some((idx, range_start, range_end - 1))
                 },
@@ -311,9 +312,10 @@ where
             .put_object()
             .bucket(&self.bucket)
             .key(format!(
-                "{}_{}.txt",
+                "{}_{}.{}",
                 &self.object_prefix,
-                self.part_size_map.len() - 1
+                self.part_size_map.len() - 1,
+                PART_EXTENSION
             ))
             .body(bytes.to_vec().into())
             .send()
@@ -344,7 +346,10 @@ where
                 .client
                 .get_object()
                 .bucket(&self.bucket)
-                .key(format!("{}_{}.txt", &self.object_prefix, last_part_idx))
+                .key(format!(
+                    "{}_{}.{}",
+                    &self.object_prefix, last_part_idx, PART_EXTENSION
+                ))
                 .range(format!("bytes={}-{}", 0, last_part_after_truncate.size - 1))
                 .send()
                 .await
@@ -353,7 +358,10 @@ where
             self.client
                 .put_object()
                 .bucket(&self.bucket)
-                .key(format!("{}_{}.txt", &self.object_prefix, last_part_idx))
+                .key(format!(
+                    "{}_{}.{}",
+                    &self.object_prefix, last_part_idx, PART_EXTENSION
+                ))
                 .body(get_object_output.body)
                 .send()
                 .await
@@ -364,7 +372,10 @@ where
             self.client
                 .delete_object()
                 .bucket(&self.bucket)
-                .key(format!("{}_{}.txt", &self.object_prefix, part_idx))
+                .key(format!(
+                    "{}_{}.{}",
+                    &self.object_prefix, part_idx, PART_EXTENSION
+                ))
                 .send()
                 .await
                 .map_err(|err| AwsS3Error::AwsSdkError(err.to_string()))?;
@@ -380,12 +391,12 @@ where
 {
     async fn remove(self) -> Result<(), Self::Error> {
         let keys = iter::once(format!(
-            "{}_{}",
+            "{}{}",
             &self.object_prefix, PART_SIZE_MAP_KEY_SUFFIX
         ))
         .chain(
             (0..self.part_size_map.len())
-                .map(|part_idx| format!("{}_{}.txt", &self.object_prefix, part_idx)),
+                .map(|part_idx| format!("{}_{}.{}", &self.object_prefix, part_idx, PART_EXTENSION)),
         );
 
         for key in keys {
@@ -411,7 +422,7 @@ where
             .put_object()
             .bucket(&self.bucket)
             .key(format!(
-                "{}_{}",
+                "{}{}",
                 &self.object_prefix, PART_SIZE_MAP_KEY_SUFFIX
             ))
             .body(
