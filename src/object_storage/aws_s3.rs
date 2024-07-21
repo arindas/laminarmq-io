@@ -315,9 +315,10 @@ where
             .put_object()
             .bucket(&self.bucket)
             .key(format!(
-                "{}_{}.txt",
+                "{}_{}.{}",
                 &self.object_prefix,
-                self.part_size_map.len() - 1
+                self.part_size_map.len() - 1,
+                PART_EXTENSION
             ))
             .body(bytes.to_vec().into())
             .send()
