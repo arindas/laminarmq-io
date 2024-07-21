@@ -437,6 +437,17 @@
 <a href="#437" id="437">437</a>
 <a href="#438" id="438">438</a>
 <a href="#439" id="439">439</a>
+<a href="#440" id="440">440</a>
+<a href="#441" id="441">441</a>
+<a href="#442" id="442">442</a>
+<a href="#443" id="443">443</a>
+<a href="#444" id="444">444</a>
+<a href="#445" id="445">445</a>
+<a href="#446" id="446">446</a>
+<a href="#447" id="447">447</a>
+<a href="#448" id="448">448</a>
+<a href="#449" id="449">449</a>
+<a href="#450" id="450">450</a>
 </pre></div><pre class="rust"><code><span class="kw">use crate</span>::{
     stream, AppendLocation, AsyncAppend, AsyncClose, AsyncRemove, AsyncTruncate, ByteLender,
     FallibleByteLender, FallibleEntity, IntegerConversionError, SizedEntity, Stream, StreamRead,
@@ -571,10 +582,7 @@
         <span class="kw">let </span>get_object_output = aws_s3_client
             .get_object()
             .bucket(<span class="kw-2">&amp;</span>bucket)
-            .key(<span class="macro">format!</span>(
-                <span class="string">"{}_{}.txt"</span>,
-                <span class="kw-2">&amp;</span>object_prefix, PART_SIZE_MAP_KEY_SUFFIX
-            ))
+            .key(<span class="macro">format!</span>(<span class="string">"{}{}"</span>, <span class="kw-2">&amp;</span>object_prefix, PART_SIZE_MAP_KEY_SUFFIX))
             .send()
             .<span class="kw">await
             </span>.map_err(|err| AwsS3Error::AwsSdkError(err.to_string()))<span class="question-mark">?</span>;
@@ -700,17 +708,21 @@
             .scan(
                 (position, size),
                 |(read_position, bytes_left_to_read), idx| {
-                    <span class="kw">if </span><span class="kw-2">*</span>bytes_left_to_read &lt;= zero() {
+                    <span class="kw">let </span>part = <span class="self">self</span>.part_size_map.get_part_at_idx(idx)<span class="question-mark">?</span>;
+
+                    <span class="kw">if </span><span class="kw-2">*</span>bytes_left_to_read &lt;= zero() || <span class="kw-2">*</span>read_position &gt;= part.end() {
                         <span class="kw">return </span><span class="prelude-val">None</span>;
                     }
-
-                    <span class="kw">let </span>part = <span class="self">self</span>.part_size_map.get_part_at_idx(idx)<span class="question-mark">?</span>;
 
                     <span class="kw">let </span>range_start = max(<span class="kw-2">*</span>read_position, part.offset);
 
                     <span class="kw">let </span>range_end = min(range_start + <span class="kw-2">*</span>bytes_left_to_read, part.end());
 
                     <span class="kw-2">*</span>bytes_left_to_read -= range_end - range_start;
+
+                    <span class="comment">// normalize range to [0, part.size)
+                    </span><span class="kw">let </span>range_start = range_start - part.offset;
+                    <span class="kw">let </span>range_end = range_end - part.offset;
 
                     <span class="prelude-val">Some</span>((idx, range_start, range_end - <span class="number">1</span>))
                 },
@@ -750,10 +762,11 @@
             .put_object()
             .bucket(<span class="kw-2">&amp;</span><span class="self">self</span>.bucket)
             .key(<span class="macro">format!</span>(
-                <span class="string">"{}_{}.txt"</span>,
+                <span class="string">"{}_{}.{}"</span>,
                 <span class="kw-2">&amp;</span><span class="self">self</span>.object_prefix,
-                <span class="self">self</span>.part_size_map.len() - <span class="number">1
-            </span>))
+                <span class="self">self</span>.part_size_map.len() - <span class="number">1</span>,
+                PART_EXTENSION
+            ))
             .body(bytes.to_vec().into())
             .send()
             .<span class="kw">await
@@ -783,7 +796,10 @@
                 </span>.client
                 .get_object()
                 .bucket(<span class="kw-2">&amp;</span><span class="self">self</span>.bucket)
-                .key(<span class="macro">format!</span>(<span class="string">"{}_{}.txt"</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.object_prefix, last_part_idx))
+                .key(<span class="macro">format!</span>(
+                    <span class="string">"{}_{}.{}"</span>,
+                    <span class="kw-2">&amp;</span><span class="self">self</span>.object_prefix, last_part_idx, PART_EXTENSION
+                ))
                 .range(<span class="macro">format!</span>(<span class="string">"bytes={}-{}"</span>, <span class="number">0</span>, last_part_after_truncate.size - <span class="number">1</span>))
                 .send()
                 .<span class="kw">await
@@ -792,7 +808,10 @@
             <span class="self">self</span>.client
                 .put_object()
                 .bucket(<span class="kw-2">&amp;</span><span class="self">self</span>.bucket)
-                .key(<span class="macro">format!</span>(<span class="string">"{}_{}.txt"</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.object_prefix, last_part_idx))
+                .key(<span class="macro">format!</span>(
+                    <span class="string">"{}_{}.{}"</span>,
+                    <span class="kw-2">&amp;</span><span class="self">self</span>.object_prefix, last_part_idx, PART_EXTENSION
+                ))
                 .body(get_object_output.body)
                 .send()
                 .<span class="kw">await
@@ -803,7 +822,10 @@
             <span class="self">self</span>.client
                 .delete_object()
                 .bucket(<span class="kw-2">&amp;</span><span class="self">self</span>.bucket)
-                .key(<span class="macro">format!</span>(<span class="string">"{}_{}.txt"</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.object_prefix, part_idx))
+                .key(<span class="macro">format!</span>(
+                    <span class="string">"{}_{}.{}"</span>,
+                    <span class="kw-2">&amp;</span><span class="self">self</span>.object_prefix, part_idx, PART_EXTENSION
+                ))
                 .send()
                 .<span class="kw">await
                 </span>.map_err(|err| AwsS3Error::AwsSdkError(err.to_string()))<span class="question-mark">?</span>;
@@ -819,12 +841,12 @@
 {
     <span class="kw">async fn </span>remove(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
         <span class="kw">let </span>keys = iter::once(<span class="macro">format!</span>(
-            <span class="string">"{}_{}"</span>,
+            <span class="string">"{}{}"</span>,
             <span class="kw-2">&amp;</span><span class="self">self</span>.object_prefix, PART_SIZE_MAP_KEY_SUFFIX
         ))
         .chain(
             (<span class="number">0</span>..<span class="self">self</span>.part_size_map.len())
-                .map(|part_idx| <span class="macro">format!</span>(<span class="string">"{}_{}.txt"</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.object_prefix, part_idx)),
+                .map(|part_idx| <span class="macro">format!</span>(<span class="string">"{}_{}.{}"</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.object_prefix, part_idx, PART_EXTENSION)),
         );
 
         <span class="kw">for </span>key <span class="kw">in </span>keys {
@@ -850,7 +872,7 @@
             .put_object()
             .bucket(<span class="kw-2">&amp;</span><span class="self">self</span>.bucket)
             .key(<span class="macro">format!</span>(
-                <span class="string">"{}_{}"</span>,
+                <span class="string">"{}{}"</span>,
                 <span class="kw-2">&amp;</span><span class="self">self</span>.object_prefix, PART_SIZE_MAP_KEY_SUFFIX
             ))
             .body(
