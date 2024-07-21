@@ -1820,10 +1820,14 @@ where
         let end = min(position + size.into(), self.size().into());
 
         let inner_stream = stream::latch(
-            stream::map(self.inner.read_stream_at(position, size), |_: &(), a| {
-                a.map(StreamReaderBufferedAppenderByteBuf::Read)
-                    .map_err(StreamReaderBufferedAppenderError::ReadError)
-            }),
+            stream::map(
+                self.inner.read_stream_at(position, size),
+                |_: &(), stream_item_bytebuf_result| {
+                    stream_item_bytebuf_result
+                        .map_err(StreamReaderBufferedAppenderError::ReadError)
+                        .map(StreamReaderBufferedAppenderByteBuf::Read)
+                },
+            ),
             position < self.append_buffer.anchor_position(),
         );
 
