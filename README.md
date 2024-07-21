@@ -4,7 +4,7 @@
 [![rustdoc](https://github.com/arindas/laminarmq-io/workflows/rustdoc/badge.svg)](https://github.com/arindas/laminarmq-io/actions/workflows/rustdoc.yml)
 
 An attempt to rewrite [`laminarmq`](https://github.com/arindas/laminarmq) I/O layer
-to acommodate capped/bounded memory overhead, both when reading and writing.
+to accommodate capped/bounded memory overhead, both when reading and writing.
 
 ## Usage
 
