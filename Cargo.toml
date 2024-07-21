@@ -6,6 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+zerovec = "0.10.4"
+zerovec-derive = "0.10.3"
 futures = "0.3.30"
 num = "0.4.2"
 tokio = { version = "1.37", features=["fs", "rt", "rt-multi-thread", "io-util", "sync"] }
