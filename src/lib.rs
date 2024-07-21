@@ -3,7 +3,7 @@ pub mod object_storage;
 pub mod stream;
 
 use std::{
-    cmp::min,
+    cmp::{max, min},
     convert::Into,
     future::Future,
     marker::PhantomData,
@@ -1817,27 +1817,36 @@ where
     where
         StreamReaderBufferedAppenderByteLender<RBL>: 'a,
     {
-        let end = min(position + size.into(), self.size().into());
+        let append_buffer_anchor_position = self.append_buffer.anchor_position();
+
+        let append_buffer_read_start = max(append_buffer_anchor_position, position);
+        let append_buffer_read_end = min(position + size.into(), self.size().into());
+        let append_buffer_read_size = append_buffer_read_end
+            .checked_sub(&append_buffer_read_start)
+            .unwrap_or(zero());
+
+        let inner_read_start = position;
+        let inner_read_end = min(self.inner.size().into(), position + size.into());
+        let inner_read_size = inner_read_end
+            .checked_sub(&inner_read_start)
+            .unwrap_or(zero());
 
         let inner_stream = stream::latch(
             stream::map(
-                self.inner.read_stream_at(position, size),
+                self.inner
+                    .read_stream_at(inner_read_start, inner_read_size.into()),
                 |_: &(), stream_item_bytebuf_result| {
                     stream_item_bytebuf_result
                         .map_err(StreamReaderBufferedAppenderError::ReadError)
                         .map(StreamReaderBufferedAppenderByteBuf::Read)
                 },
             ),
-            position < self.append_buffer.anchor_position(),
+            inner_read_size == zero() || position < append_buffer_anchor_position,
         );
 
-        let append_buffer_read_size = end - self.append_buffer.anchor_position();
         let append_buffer_read_bytes = self
             .append_buffer
-            .read_at(
-                self.append_buffer.anchor_position(),
-                append_buffer_read_size,
-            )
+            .read_at(append_buffer_read_start, append_buffer_read_size)
             .unwrap_or(&[]);
         let buffered_bytes = AppendBufferBytes::new(append_buffer_read_bytes);
 
