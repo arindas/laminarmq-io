@@ -1841,7 +1841,7 @@ where
                         .map(StreamReaderBufferedAppenderByteBuf::Read)
                 },
             ),
-            inner_read_size == zero() || position < append_buffer_anchor_position,
+            inner_read_size > zero() && position < append_buffer_anchor_position,
         );
 
         let append_buffer_read_bytes = self
