@@ -1917,6 +1917,10 @@
 <a href="#1917" id="1917">1917</a>
 <a href="#1918" id="1918">1918</a>
 <a href="#1919" id="1919">1919</a>
+<a href="#1920" id="1920">1920</a>
+<a href="#1921" id="1921">1921</a>
+<a href="#1922" id="1922">1922</a>
+<a href="#1923" id="1923">1923</a>
 </pre></div><pre class="rust"><code><span class="kw">pub mod </span>fs;
 <span class="kw">pub mod </span>object_storage;
 <span class="kw">pub mod </span>stream;
@@ -3739,10 +3743,14 @@
         <span class="kw">let </span>end = min(position + size.into(), <span class="self">self</span>.size().into());
 
         <span class="kw">let </span>inner_stream = stream::latch(
-            stream::map(<span class="self">self</span>.inner.read_stream_at(position, size), |<span class="kw">_</span>: <span class="kw-2">&amp;</span>(), a| {
-                a.map(StreamReaderBufferedAppenderByteBuf::Read)
-                    .map_err(StreamReaderBufferedAppenderError::ReadError)
-            }),
+            stream::map(
+                <span class="self">self</span>.inner.read_stream_at(position, size),
+                |<span class="kw">_</span>: <span class="kw-2">&amp;</span>(), stream_item_bytebuf_result| {
+                    stream_item_bytebuf_result
+                        .map_err(StreamReaderBufferedAppenderError::ReadError)
+                        .map(StreamReaderBufferedAppenderByteBuf::Read)
+                },
+            ),
             position &lt; <span class="self">self</span>.append_buffer.anchor_position(),
         );
 
