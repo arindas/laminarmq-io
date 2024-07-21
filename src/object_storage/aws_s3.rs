@@ -261,17 +261,21 @@ where
             .scan(
                 (position, size),
                 |(read_position, bytes_left_to_read), idx| {
-                    if *bytes_left_to_read <= zero() {
+                    let part = self.part_size_map.get_part_at_idx(idx)?;
+
+                    if *bytes_left_to_read <= zero() || *read_position >= part.end() {
                         return None;
                     }
-
-                    let part = self.part_size_map.get_part_at_idx(idx)?;
 
                     let range_start = max(*read_position, part.offset);
 
                     let range_end = min(range_start + *bytes_left_to_read, part.end());
 
                     *bytes_left_to_read -= range_end - range_start;
+
+                    // normalize range to [0, part.size)
+                    let range_start = range_start - part.offset;
+                    let range_end = range_end - part.offset;
 
                     Some((idx, range_start, range_end - 1))
                 },
