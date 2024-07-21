@@ -1921,12 +1921,21 @@
 <a href="#1921" id="1921">1921</a>
 <a href="#1922" id="1922">1922</a>
 <a href="#1923" id="1923">1923</a>
+<a href="#1924" id="1924">1924</a>
+<a href="#1925" id="1925">1925</a>
+<a href="#1926" id="1926">1926</a>
+<a href="#1927" id="1927">1927</a>
+<a href="#1928" id="1928">1928</a>
+<a href="#1929" id="1929">1929</a>
+<a href="#1930" id="1930">1930</a>
+<a href="#1931" id="1931">1931</a>
+<a href="#1932" id="1932">1932</a>
 </pre></div><pre class="rust"><code><span class="kw">pub mod </span>fs;
 <span class="kw">pub mod </span>object_storage;
 <span class="kw">pub mod </span>stream;
 
 <span class="kw">use </span>std::{
-    cmp::min,
+    cmp::{max, min},
     convert::Into,
     future::Future,
     marker::PhantomData,
@@ -3740,27 +3749,36 @@
     </span><span class="kw">where
         </span>StreamReaderBufferedAppenderByteLender&lt;RBL&gt;: <span class="lifetime">'a</span>,
     {
-        <span class="kw">let </span>end = min(position + size.into(), <span class="self">self</span>.size().into());
+        <span class="kw">let </span>append_buffer_anchor_position = <span class="self">self</span>.append_buffer.anchor_position();
+
+        <span class="kw">let </span>append_buffer_read_start = max(append_buffer_anchor_position, position);
+        <span class="kw">let </span>append_buffer_read_end = min(position + size.into(), <span class="self">self</span>.size().into());
+        <span class="kw">let </span>append_buffer_read_size = append_buffer_read_end
+            .checked_sub(<span class="kw-2">&amp;</span>append_buffer_read_start)
+            .unwrap_or(zero());
+
+        <span class="kw">let </span>inner_read_start = position;
+        <span class="kw">let </span>inner_read_end = min(<span class="self">self</span>.inner.size().into(), position + size.into());
+        <span class="kw">let </span>inner_read_size = inner_read_end
+            .checked_sub(<span class="kw-2">&amp;</span>inner_read_start)
+            .unwrap_or(zero());
 
         <span class="kw">let </span>inner_stream = stream::latch(
             stream::map(
-                <span class="self">self</span>.inner.read_stream_at(position, size),
+                <span class="self">self</span>.inner
+                    .read_stream_at(inner_read_start, inner_read_size.into()),
                 |<span class="kw">_</span>: <span class="kw-2">&amp;</span>(), stream_item_bytebuf_result| {
                     stream_item_bytebuf_result
                         .map_err(StreamReaderBufferedAppenderError::ReadError)
                         .map(StreamReaderBufferedAppenderByteBuf::Read)
                 },
             ),
-            position &lt; <span class="self">self</span>.append_buffer.anchor_position(),
+            inner_read_size == zero() || position &lt; append_buffer_anchor_position,
         );
 
-        <span class="kw">let </span>append_buffer_read_size = end - <span class="self">self</span>.append_buffer.anchor_position();
         <span class="kw">let </span>append_buffer_read_bytes = <span class="self">self
             </span>.append_buffer
-            .read_at(
-                <span class="self">self</span>.append_buffer.anchor_position(),
-                append_buffer_read_size,
-            )
+            .read_at(append_buffer_read_start, append_buffer_read_size)
             .unwrap_or(<span class="kw-2">&amp;</span>[]);
         <span class="kw">let </span>buffered_bytes = AppendBufferBytes::new(append_buffer_read_bytes);
 
