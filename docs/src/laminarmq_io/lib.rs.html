@@ -3773,7 +3773,7 @@
                         .map(StreamReaderBufferedAppenderByteBuf::Read)
                 },
             ),
-            inner_read_size == zero() || position &lt; append_buffer_anchor_position,
+            inner_read_size &gt; zero() &amp;&amp; position &lt; append_buffer_anchor_position,
         );
 
         <span class="kw">let </span>append_buffer_read_bytes = <span class="self">self
