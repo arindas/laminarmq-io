@@ -1763,12 +1763,12 @@ where
         Self: 'a;
 }
 
-struct AppendBufferBytes<'a> {
+struct BufferedBytes<'a> {
     buffered_bytes: &'a [u8],
     consumed: bool,
 }
 
-impl<'a> AppendBufferBytes<'a> {
+impl<'a> BufferedBytes<'a> {
     fn new(buffered_bytes: &'a [u8]) -> Self {
         Self {
             buffered_bytes,
@@ -1778,7 +1778,7 @@ impl<'a> AppendBufferBytes<'a> {
 }
 
 impl<'x, RBL, E> Stream<FallibleByteLender<StreamReaderBufferedAppenderByteLender<RBL>, E>>
-    for AppendBufferBytes<'x>
+    for BufferedBytes<'x>
 where
     RBL: ByteLender,
 {
@@ -1848,7 +1848,7 @@ where
             .append_buffer
             .read_at(append_buffer_read_start, append_buffer_read_size)
             .unwrap_or(&[]);
-        let buffered_bytes = AppendBufferBytes::new(append_buffer_read_bytes);
+        let buffered_bytes = BufferedBytes::new(append_buffer_read_bytes);
 
         stream::chain(inner_stream, buffered_bytes)
     }
@@ -1927,6 +1927,124 @@ where
             }
 
             Err(error) => Err(error),
+        }
+    }
+}
+
+#[allow(unused)]
+pub struct BufferedStreamReader<R, RB, P, S> {
+    inner: R,
+    read_limit: Option<S>,
+
+    read_buffer: AnchoredBuffer<RB, P>,
+    size: S,
+}
+
+pub enum BufferedStreamReaderError<E> {
+    ReadError(E),
+    RemoveError(E),
+    CloseError(E),
+
+    ReadBeyondWrittenArea,
+    ReadBufferGap,
+    ReadUnderflow,
+    ReadBufferError(BufferError),
+
+    IntegerConversionError,
+}
+
+impl<E> From<IntegerConversionError> for BufferedStreamReaderError<E> {
+    fn from(_: IntegerConversionError) -> Self {
+        Self::IntegerConversionError
+    }
+}
+impl<R, RB, P, S> AsyncRemove for BufferedStreamReader<R, RB, P, S>
+where
+    R: AsyncRemove,
+{
+    fn remove(self) -> impl Future<Output = Result<(), Self::Error>> {
+        self.inner.remove().map_err(Self::Error::RemoveError)
+    }
+}
+
+impl<R, RB, P, S> AsyncClose for BufferedStreamReader<R, RB, P, S>
+where
+    R: AsyncClose,
+    RB: DerefMut<Target = [u8]>,
+{
+    async fn close(self) -> Result<(), Self::Error> {
+        self.inner.close().await.map_err(Self::Error::CloseError)
+    }
+}
+
+impl<R, RB> SizedEntity for BufferedStreamReader<R, RB, R::Position, R::Size>
+where
+    R: SizedEntity,
+{
+    type Position = R::Position;
+
+    type Size = R::Size;
+
+    fn size(&self) -> Self::Size {
+        self.size
+    }
+}
+
+impl<R, RB, P, S> FallibleEntity for BufferedStreamReader<R, RB, P, S>
+where
+    R: FallibleEntity,
+{
+    type Error = BufferedStreamReaderError<R::Error>;
+}
+
+pub enum BufferedStreamReaderByteBuf<'a, T> {
+    Buffered(&'a [u8]),
+    Read(T),
+}
+
+impl<'a, T> Deref for BufferedStreamReaderByteBuf<'a, T>
+where
+    T: Deref<Target = [u8]> + 'a,
+{
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Buffered(buffered) => buffered,
+            Self::Read(read_bytes) => read_bytes,
+        }
+    }
+}
+
+pub struct BufferedStreamReaderByteLender<BL>(PhantomData<BL>);
+
+impl<BL> ByteLender for BufferedStreamReaderByteLender<BL>
+where
+    BL: ByteLender,
+{
+    type ByteBuf<'a> = BufferedStreamReaderByteBuf<'a, BL::ByteBuf<'a>>
+    where
+        Self: 'a;
+}
+
+impl<'x, RBL, E> Stream<FallibleByteLender<BufferedStreamReaderByteLender<RBL>, E>>
+    for BufferedBytes<'x>
+where
+    RBL: ByteLender,
+{
+    async fn next<'a>(
+        &'a mut self,
+    ) -> Option<<FallibleByteLender<BufferedStreamReaderByteLender<RBL>, E> as Lender>::Item<'a>>
+    where
+        FallibleByteLender<BufferedStreamReaderByteLender<RBL>, E>: 'a,
+    {
+        if self.consumed {
+            None
+        } else {
+            self.consumed = true;
+            Some(Ok(BufferedStreamReaderByteBuf::Buffered(
+                self.buffered_bytes,
+            )))
         }
     }
 }
