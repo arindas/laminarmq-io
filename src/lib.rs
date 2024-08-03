@@ -1763,12 +1763,12 @@ where
         Self: 'a;
 }
 
-struct BufferedBytes<'a> {
+struct StreamReaderBufferedAppenderBufferedBytesStream<'a> {
     buffered_bytes: &'a [u8],
     consumed: bool,
 }
 
-impl<'a> BufferedBytes<'a> {
+impl<'a> StreamReaderBufferedAppenderBufferedBytesStream<'a> {
     fn new(buffered_bytes: &'a [u8]) -> Self {
         Self {
             buffered_bytes,
@@ -1778,7 +1778,7 @@ impl<'a> BufferedBytes<'a> {
 }
 
 impl<'x, RBL, E> Stream<FallibleByteLender<StreamReaderBufferedAppenderByteLender<RBL>, E>>
-    for BufferedBytes<'x>
+    for StreamReaderBufferedAppenderBufferedBytesStream<'x>
 where
     RBL: ByteLender,
 {
@@ -1848,7 +1848,8 @@ where
             .append_buffer
             .read_at(append_buffer_read_start, append_buffer_read_size)
             .unwrap_or(&[]);
-        let buffered_bytes = BufferedBytes::new(append_buffer_read_bytes);
+        let buffered_bytes =
+            StreamReaderBufferedAppenderBufferedBytesStream::new(append_buffer_read_bytes);
 
         stream::chain(inner_stream, buffered_bytes)
     }
@@ -2026,28 +2027,6 @@ where
     type ByteBuf<'a> = BufferedStreamReaderByteBuf<'a, BL::ByteBuf<'a>>
     where
         Self: 'a;
-}
-
-impl<'x, RBL, E> Stream<FallibleByteLender<BufferedStreamReaderByteLender<RBL>, E>>
-    for BufferedBytes<'x>
-where
-    RBL: ByteLender,
-{
-    async fn next<'a>(
-        &'a mut self,
-    ) -> Option<<FallibleByteLender<BufferedStreamReaderByteLender<RBL>, E> as Lender>::Item<'a>>
-    where
-        FallibleByteLender<BufferedStreamReaderByteLender<RBL>, E>: 'a,
-    {
-        if self.consumed {
-            None
-        } else {
-            self.consumed = true;
-            Some(Ok(BufferedStreamReaderByteBuf::Buffered(
-                self.buffered_bytes,
-            )))
-        }
-    }
 }
 
 pub enum BufferedStreamReaderReadStreamState<P, S> {
