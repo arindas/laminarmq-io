@@ -2223,26 +2223,37 @@ where
     {
         let inner_size = self.inner.size();
 
-        let initial_state = if self.read_buffer.contains_position(position) {
-            let avail_to_read_from_pos = self.read_buffer.avail_to_read_from_pos(position);
-            let avail_to_read_from_pos =
-                R::Size::from_usize(avail_to_read_from_pos).unwrap_or(zero());
+        let (initial_state, inner_read_pos, inner_read_size) =
+            if self.read_buffer.contains_position(position) {
+                let avail_to_read_from_pos = self.read_buffer.avail_to_read_from_pos(position);
+                let avail_to_read_from_pos =
+                    R::Size::from_usize(avail_to_read_from_pos).unwrap_or(zero());
 
-            BufferedStreamReaderReadStreamState::ConsumeBuffer {
-                read_position: position,
-                read_size: avail_to_read_from_pos,
-                remainder: size.checked_sub(&avail_to_read_from_pos).unwrap_or(zero()),
-            }
-        } else {
-            BufferedStreamReaderReadStreamState::FillBuffer {
-                read_position: position,
-                remainder: size,
-            }
-        };
+                let remainder = size.checked_sub(&avail_to_read_from_pos).unwrap_or(zero());
+
+                (
+                    BufferedStreamReaderReadStreamState::ConsumeBuffer {
+                        read_position: position,
+                        read_size: avail_to_read_from_pos,
+                        remainder,
+                    },
+                    position + avail_to_read_from_pos.into(),
+                    remainder,
+                )
+            } else {
+                (
+                    BufferedStreamReaderReadStreamState::FillBuffer {
+                        read_position: position,
+                        remainder: size,
+                    },
+                    position,
+                    size,
+                )
+            };
 
         BufferedStreamReaderReadStream {
             state: initial_state,
-            inner_stream: self.inner.read_stream_at(position, size),
+            inner_stream: self.inner.read_stream_at(inner_read_pos, inner_read_size),
             read_buffer: &mut self.read_buffer,
             inner_size,
             _phantom_data: PhantomData::<R>,
