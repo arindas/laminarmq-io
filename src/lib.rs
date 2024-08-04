@@ -232,6 +232,50 @@ pub trait AsyncRead<B: ByteLender>: SizedEntity + FallibleEntity {
         B: 'a;
 }
 
+pub struct ReadLimitedAsyncRead<R, S> {
+    inner: R,
+    read_limit: S,
+}
+
+impl<R, S> FallibleEntity for ReadLimitedAsyncRead<R, S>
+where
+    R: FallibleEntity,
+{
+    type Error = R::Error;
+}
+
+impl<R> SizedEntity for ReadLimitedAsyncRead<R, R::Size>
+where
+    R: SizedEntity,
+{
+    type Position = R::Position;
+
+    type Size = R::Size;
+
+    fn size(&self) -> Self::Size {
+        self.inner.size()
+    }
+}
+
+impl<B, R> AsyncRead<B> for ReadLimitedAsyncRead<R, R::Size>
+where
+    R: AsyncRead<B>,
+    B: ByteLender,
+{
+    async fn read_at<'a>(
+        &'a mut self,
+        position: Self::Position,
+        size: Self::Size,
+    ) -> Result<ReadBytes<<B as ByteLender>::ByteBuf<'a>, Self::Size>, Self::Error>
+    where
+        B: 'a,
+    {
+        self.inner
+            .read_at(position, min(self.read_limit, size))
+            .await
+    }
+}
+
 pub struct FallibleByteLender<B, E>(PhantomData<(B, E)>);
 
 impl<B, E> Lender for FallibleByteLender<B, E>
