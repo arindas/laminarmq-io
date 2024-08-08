@@ -1687,8 +1687,6 @@ pub enum StreamReaderBufferedAppenderError<E> {
     CloseError(E),
 
     ReadBeyondWrittenArea,
-    ReadBufferGap,
-    ReadUnderflow,
     AppendBufferError(BufferError),
 
     FlushIncomplete,
@@ -1990,8 +1988,6 @@ pub enum BufferedStreamReaderError<E> {
     CloseError(E),
 
     ReadBeyondWrittenArea,
-    ReadBufferGap,
-    ReadUnderflow,
     ReadBufferError(BufferError),
 
     IntegerConversionError,
@@ -2282,4 +2278,141 @@ where
             _phantom_data: PhantomData::<R>,
         }
     }
+}
+
+#[allow(unused)]
+pub struct BufferedStreamReaderBufferedAppender<R, RB, AB, P, S> {
+    inner: R,
+
+    append_buffer: AnchoredBuffer<AB, P>,
+    read_buffer: AnchoredBuffer<RB, P>,
+
+    _phantom_data: PhantomData<S>,
+}
+
+pub enum BufferedStreamReaderBufferedAppenderError<E> {
+    AppendError(E),
+    ReadError(E),
+    RemoveError(E),
+    CloseError(E),
+
+    AppendBufferError(BufferError),
+    ReadBufferError(BufferError),
+
+    ReadBeyondWrittenArea,
+    FlushIncomplete,
+
+    IntegerConversionError,
+}
+
+impl<E> From<IntegerConversionError> for BufferedStreamReaderBufferedAppenderError<E> {
+    fn from(_: IntegerConversionError) -> Self {
+        Self::IntegerConversionError
+    }
+}
+impl<R, RB, AB, P, S> AsyncRemove for BufferedStreamReaderBufferedAppender<R, RB, AB, P, S>
+where
+    R: AsyncRemove,
+{
+    fn remove(self) -> impl Future<Output = Result<(), Self::Error>> {
+        self.inner.remove().map_err(Self::Error::RemoveError)
+    }
+}
+
+impl<R, RB, AB, P, S> AsyncClose for BufferedStreamReaderBufferedAppender<R, RB, AB, P, S>
+where
+    R: AsyncClose,
+    RB: DerefMut<Target = [u8]>,
+{
+    async fn close(self) -> Result<(), Self::Error> {
+        self.inner.close().await.map_err(Self::Error::CloseError)
+    }
+}
+
+impl<R, RB, AB> SizedEntity
+    for BufferedStreamReaderBufferedAppender<R, RB, AB, R::Position, R::Size>
+where
+    R: SizedEntity,
+{
+    type Position = R::Position;
+
+    type Size = R::Size;
+
+    fn size(&self) -> Self::Size {
+        self.inner.size()
+    }
+}
+
+impl<R, RB, AB, P, S> FallibleEntity for BufferedStreamReaderBufferedAppender<R, RB, AB, P, S>
+where
+    R: FallibleEntity,
+{
+    type Error = BufferedStreamReaderBufferedAppenderError<R::Error>;
+}
+pub enum BufferedStreamReaderBufferedAppenderByteBuf<'a, T> {
+    Buffered(&'a [u8]),
+    Read(T),
+    Delim,
+}
+
+impl<'a, T> Deref for BufferedStreamReaderBufferedAppenderByteBuf<'a, T>
+where
+    T: Deref<Target = [u8]> + 'a,
+{
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Buffered(buffered) => buffered,
+            Self::Read(read_bytes) => read_bytes,
+            Self::Delim => &[],
+        }
+    }
+}
+
+pub struct BufferedStreamReaderBufferedAppenderByteLender<BL>(PhantomData<BL>);
+
+impl<BL> ByteLender for BufferedStreamReaderBufferedAppenderByteLender<BL>
+where
+    BL: ByteLender,
+{
+    type ByteBuf<'a> = BufferedStreamReaderBufferedAppenderByteBuf<'a, BL::ByteBuf<'a>>
+    where
+        Self: 'a;
+}
+
+pub enum BufferedStreamReaderBufferedAppenderReadStreamState<P, S> {
+    ConsumeReadBuffer {
+        read_position: P,
+        read_size: S,
+        remainder: S,
+    },
+    ReanchorReadBuffer {
+        read_position: P,
+        remainder: S,
+    },
+    FillReadBuffer {
+        read_position: P,
+        remainder: S,
+    },
+    ConsumeAppendBuffer {
+        read_position: P,
+        read_size: S,
+        remainder: S,
+    },
+    Done,
+}
+
+#[allow(unused)]
+pub struct BufferedStreamReaderBufferedAppenderReadStream<'a, R, RS, RB, AB, P, S> {
+    state: BufferedStreamReaderBufferedAppenderReadStreamState<P, S>,
+
+    inner_stream: RS,
+
+    read_buffer: &'a mut AnchoredBuffer<RB, P>,
+    append_buffer: &'a AnchoredBuffer<AB, P>,
+
+    inner_size: S,
+
+    _phantom_data: PhantomData<R>,
 }
