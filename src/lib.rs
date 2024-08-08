@@ -2520,6 +2520,21 @@ where
             BufferedStreamReaderBufferedAppenderReadStreamState::FillReadBuffer {
                 read_position,
                 remainder,
+            } if self.read_buffer.len() == self.read_buffer.capacity()
+                || read_position != self.read_buffer.end_position().ok()? =>
+            {
+                (
+                    Some(Ok(BufferedStreamReaderBufferedAppenderByteBuf::Delim)),
+                    BufferedStreamReaderBufferedAppenderReadStreamState::ReanchorReadBuffer {
+                        read_position,
+                        remainder,
+                    },
+                )
+            }
+
+            BufferedStreamReaderBufferedAppenderReadStreamState::FillReadBuffer {
+                read_position,
+                remainder,
             } => match self.inner_stream.next().await {
                 Some(read_bytes) => {
                     let read_bytes = read_bytes
