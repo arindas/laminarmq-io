@@ -2520,35 +2520,42 @@ where
             BufferedStreamReaderBufferedAppenderReadStreamState::FillReadBuffer {
                 read_position,
                 remainder,
-            } => {
-                let read_bytes = self
-                    .inner_stream
-                    .next()
-                    .await?
-                    .map_err(BufferedStreamReaderBufferedAppenderError::ReadError)
-                    .and_then(|x| {
-                        let avail_to_append = self.read_buffer.avail_to_append();
+            } => match self.inner_stream.next().await {
+                Some(read_bytes) => {
+                    let read_bytes = read_bytes
+                        .map_err(BufferedStreamReaderBufferedAppenderError::ReadError)
+                        .and_then(|x| {
+                            let avail_to_append = self.read_buffer.avail_to_append();
 
-                        self.read_buffer
-                            .append(&x.deref()[..avail_to_append])
-                            .map_err(BufferedStreamReaderBufferedAppenderError::ReadBufferError)
-                            .and(Ok(BufferedStreamReaderBufferedAppenderByteBuf::Read(x)))
-                    });
+                            self.read_buffer
+                                .append(&x.deref()[..avail_to_append])
+                                .map_err(BufferedStreamReaderBufferedAppenderError::ReadBufferError)
+                                .and(Ok(BufferedStreamReaderBufferedAppenderByteBuf::Read(x)))
+                        });
 
-                let read_bytes_len =
-                    R::Size::from_usize(read_bytes.as_ref().map(|x| x.len()).unwrap_or(0))?;
+                    let read_bytes_len =
+                        R::Size::from_usize(read_bytes.as_ref().map(|x| x.len()).unwrap_or(0))?;
 
-                let remainder = remainder.checked_sub(&read_bytes_len).unwrap_or(zero());
-                let read_position = read_position + read_bytes_len.into();
+                    let remainder = remainder.checked_sub(&read_bytes_len).unwrap_or(zero());
+                    let read_position = read_position + read_bytes_len.into();
 
-                (
-                    Some(read_bytes),
+                    (
+                        Some(read_bytes),
+                        BufferedStreamReaderBufferedAppenderReadStreamState::FillReadBuffer {
+                            read_position,
+                            remainder,
+                        },
+                    )
+                }
+
+                None => (
+                    Some(Ok(BufferedStreamReaderBufferedAppenderByteBuf::Delim)),
                     BufferedStreamReaderBufferedAppenderReadStreamState::FillReadBuffer {
-                        read_position,
+                        read_position: self.inner_size.into(),
                         remainder,
                     },
-                )
-            }
+                ),
+            },
 
             BufferedStreamReaderBufferedAppenderReadStreamState::ConsumeAppendBuffer {
                 read_position,
