@@ -33,7 +33,7 @@ This crate provides the following I/O related traits:
 | ----------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | [`AsyncRead`]     | `R I/O`             | [`AsyncBufRead`] (<code>struct <i>BufferedReader\*</i></code>),<br> [`AsyncRead`] (struct [`DirectReaderBufferedAppender`]) |
 | [`AsyncBufRead`]  | `R I/O`             | -                                                                                                                           |
-| [`StreamRead`]    | _Streaming_ `R I/O` | [`AsyncRead`] (struct [`AsyncReadStreamer`], <code>struct <i>BufferedStreamReader\*</i></code>)                             |
+| [`StreamRead`]    | _Streaming_ `R I/O` | [`AsyncRead`] (struct [`AsyncReadStreamer`],<br> <code>struct <i>BufferedStreamReader\*</i></code>)                         |
 | [`AsyncAppend`]   | `W I/O`             | [`AsyncAppend`] (<code>struct <i>\*BufferedAppender</i></code>)                                                             |
 | [`StreamAppend`]  | _Streaming_ `W I/O` | [`AsyncAppend`] (_trait impl_)                                                                                              |
 | [`AsyncTruncate`] | `W I/O`             | -                                                                                                                           |
