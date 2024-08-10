@@ -16,7 +16,7 @@
 
 <p align="center">
 An attempt to rewrite the <a href="https://github.com/arindas/laminarmq"><code>laminarmq</code></a> I/O layer
-to accommodate bounded memory overhead when reading and writing.
+to accommodate bounded memory overhead during read/write ops.
 </p>
 
 ## Usage
