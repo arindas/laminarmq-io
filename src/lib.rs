@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 pub mod fs;
 pub mod object_storage;
 pub mod stream;
