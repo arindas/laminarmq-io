@@ -1,10 +1,20 @@
-# laminarmq-io
+<p align="center">
+<h1 align="center"><code>laminarmq-io</code></h1>
+</p>
 
-[![rust-ci](https://github.com/arindas/laminarmq-io/workflows/rust-ci/badge.svg)](https://github.com/arindas/laminarmq-io/actions/workflows/rust-ci.yml)
-[![rustdoc](https://github.com/arindas/laminarmq-io/workflows/rustdoc/badge.svg)](https://github.com/arindas/laminarmq-io/actions/workflows/rustdoc.yml)
+<p align="center">
+  <a href="https://github.com/arindas/laminarmq-io/actions/workflows/rust-ci.yml">
+    <img src="https://github.com/arindas/laminarmq-io/actions/workflows/rust-ci.yml/badge.svg">
+  </a>
+  <a href="https://github.com/arindas/laminarmq-io/actions/workflows/rustdoc.yml">
+    <img src="https://github.com/arindas/laminarmq-io/actions/workflows/rustdoc.yml/badge.svg">
+  </a>
+</p>
 
-An attempt to rewrite [`laminarmq`](https://github.com/arindas/laminarmq) I/O layer
-to accommodate capped/bounded memory overhead, both when reading and writing.
+<p align="center">
+An attempt to rewrite <a href="https://github.com/arindas/laminarmq"><code>laminarmq</code></a> I/O layer
+to accommodate bounded memory overhead when reading and writing.
+</p>
 
 ## Usage
 
@@ -17,34 +27,27 @@ laminarmq-io = { git = "https://github.com/arindas/laminarmq-io.git" }
 
 ## Overview
 
-This crate provides the following traits:
+This crate provides the following I/O related traits:
 
-- `AsyncRead`
-- `AsyncBufRead`
-- `StreamRead`
-- `AsyncAppend`
-- `AsyncTruncate`
-- `StreamAppend`
-- `AsyncRemove`
-- `AsyncClose`
+| **Trait**         | **Type**            | **Wrapper Implemented On**                                                                                                |
+| ----------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| [`AsyncRead`]     | `R I/O`             | [`AsyncBufRead`] (<code>struct <i>BufferedReader\*</i></code>),<br> `AsyncRead` (struct [`DirectReaderBufferedAppender`]) |
+| [`AsyncBufRead`]  | `R I/O`             | -                                                                                                                         |
+| [`StreamRead`]    | _Streaming_ `R I/O` | [`AsyncRead`] (struct [`AsyncReadStreamer`],<br> <code>struct <i>BufferedStreamReader\*</i></code>)                       |
+| [`AsyncAppend`]   | `W I/O`             | [`AsyncAppend`] (<code>struct <i>\*BufferedAppender</i></code>)                                                           |
+| [`StreamAppend`]  | _Streaming_ `W I/O` | [`AsyncAppend`] (_trait impl_)                                                                                            |
+| [`AsyncTruncate`] | `W I/O`             | -                                                                                                                         |
+| [`AsyncRemove`]   | Management          | -                                                                                                                         |
+| [`AsyncClose`]    | Management          | -                                                                                                                         |
 
-On top of these traits, we aim to provide the following abstractions:
+<br>
 
-- [x] Streaming read / append
-- [x] Buffered Reader
-- [x] Buffered Appender
-- [x] Direct Reader and Buffered Appender
-- [x] Buffered Reader and Direct Appender
-- [x] Buffered Reader and Buffered Appender
-- [x] Streaming Reader and Buffered Appender
+This library makes the following improvments over existing I/O primitives in `laminarmq`:
 
-This library acknowledges the fact that even simply reading may require
-mutation (such as advancing the filepointer) on different platforms. Hence
-all operations are exclusive. This library aims to remove the need for
-unnecessary internal locks in our I/O abstractions.
-
-This generality allows us to abstract over local file system based storage
-as well as object storage (like AWS S3) with the same API.
+- Provides traits at individual operaton level i.e `Read` / `Append` level as opposed to a unified `Storage` trait
+- All operations are exclusive with a `&mut self` receiver to avoid internal locks
+- Provides both streaming read and streaming write
+- Provides impls on both filessytem based APIs and cloud object storage APIs such as S3
 
 ## License
 

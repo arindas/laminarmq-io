@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 pub mod fs;
 pub mod object_storage;
 pub mod stream;
@@ -230,6 +232,50 @@ pub trait AsyncRead<B: ByteLender>: SizedEntity + FallibleEntity {
     ) -> impl Future<Output = Result<ReadBytes<B::ByteBuf<'a>, Self::Size>, Self::Error>> + 'a
     where
         B: 'a;
+}
+
+pub struct ReadLimitedAsyncRead<R, S> {
+    inner: R,
+    read_limit: S,
+}
+
+impl<R, S> FallibleEntity for ReadLimitedAsyncRead<R, S>
+where
+    R: FallibleEntity,
+{
+    type Error = R::Error;
+}
+
+impl<R> SizedEntity for ReadLimitedAsyncRead<R, R::Size>
+where
+    R: SizedEntity,
+{
+    type Position = R::Position;
+
+    type Size = R::Size;
+
+    fn size(&self) -> Self::Size {
+        self.inner.size()
+    }
+}
+
+impl<B, R> AsyncRead<B> for ReadLimitedAsyncRead<R, R::Size>
+where
+    R: AsyncRead<B>,
+    B: ByteLender,
+{
+    async fn read_at<'a>(
+        &'a mut self,
+        position: Self::Position,
+        size: Self::Size,
+    ) -> Result<ReadBytes<<B as ByteLender>::ByteBuf<'a>, Self::Size>, Self::Error>
+    where
+        B: 'a,
+    {
+        self.inner
+            .read_at(position, min(self.read_limit, size))
+            .await
+    }
 }
 
 pub struct FallibleByteLender<B, E>(PhantomData<(B, E)>);
@@ -1643,8 +1689,6 @@ pub enum StreamReaderBufferedAppenderError<E> {
     CloseError(E),
 
     ReadBeyondWrittenArea,
-    ReadBufferGap,
-    ReadUnderflow,
     AppendBufferError(BufferError),
 
     FlushIncomplete,
@@ -1763,12 +1807,12 @@ where
         Self: 'a;
 }
 
-struct AppendBufferBytes<'a> {
+struct StreamReaderBufferedAppenderBufferedBytesStream<'a> {
     buffered_bytes: &'a [u8],
     consumed: bool,
 }
 
-impl<'a> AppendBufferBytes<'a> {
+impl<'a> StreamReaderBufferedAppenderBufferedBytesStream<'a> {
     fn new(buffered_bytes: &'a [u8]) -> Self {
         Self {
             buffered_bytes,
@@ -1778,7 +1822,7 @@ impl<'a> AppendBufferBytes<'a> {
 }
 
 impl<'x, RBL, E> Stream<FallibleByteLender<StreamReaderBufferedAppenderByteLender<RBL>, E>>
-    for AppendBufferBytes<'x>
+    for StreamReaderBufferedAppenderBufferedBytesStream<'x>
 where
     RBL: ByteLender,
 {
@@ -1848,7 +1892,8 @@ where
             .append_buffer
             .read_at(append_buffer_read_start, append_buffer_read_size)
             .unwrap_or(&[]);
-        let buffered_bytes = AppendBufferBytes::new(append_buffer_read_bytes);
+        let buffered_bytes =
+            StreamReaderBufferedAppenderBufferedBytesStream::new(append_buffer_read_bytes);
 
         stream::chain(inner_stream, buffered_bytes)
     }
@@ -1927,6 +1972,751 @@ where
             }
 
             Err(error) => Err(error),
+        }
+    }
+}
+
+#[allow(unused)]
+pub struct BufferedStreamReader<R, RB, P, S> {
+    inner: R,
+    read_buffer: AnchoredBuffer<RB, P>,
+
+    _phantom_data: PhantomData<S>,
+}
+
+pub enum BufferedStreamReaderError<E> {
+    ReadError(E),
+    RemoveError(E),
+    CloseError(E),
+
+    ReadBeyondWrittenArea,
+    ReadBufferError(BufferError),
+
+    IntegerConversionError,
+}
+
+impl<E> From<IntegerConversionError> for BufferedStreamReaderError<E> {
+    fn from(_: IntegerConversionError) -> Self {
+        Self::IntegerConversionError
+    }
+}
+impl<R, RB, P, S> AsyncRemove for BufferedStreamReader<R, RB, P, S>
+where
+    R: AsyncRemove,
+{
+    fn remove(self) -> impl Future<Output = Result<(), Self::Error>> {
+        self.inner.remove().map_err(Self::Error::RemoveError)
+    }
+}
+
+impl<R, RB, P, S> AsyncClose for BufferedStreamReader<R, RB, P, S>
+where
+    R: AsyncClose,
+    RB: DerefMut<Target = [u8]>,
+{
+    async fn close(self) -> Result<(), Self::Error> {
+        self.inner.close().await.map_err(Self::Error::CloseError)
+    }
+}
+
+impl<R, RB> SizedEntity for BufferedStreamReader<R, RB, R::Position, R::Size>
+where
+    R: SizedEntity,
+{
+    type Position = R::Position;
+
+    type Size = R::Size;
+
+    fn size(&self) -> Self::Size {
+        self.inner.size()
+    }
+}
+
+impl<R, RB, P, S> FallibleEntity for BufferedStreamReader<R, RB, P, S>
+where
+    R: FallibleEntity,
+{
+    type Error = BufferedStreamReaderError<R::Error>;
+}
+
+pub enum BufferedStreamReaderByteBuf<'a, T> {
+    Buffered(&'a [u8]),
+    Read(T),
+    Delim,
+}
+
+impl<'a, T> Deref for BufferedStreamReaderByteBuf<'a, T>
+where
+    T: Deref<Target = [u8]> + 'a,
+{
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Buffered(buffered) => buffered,
+            Self::Read(read_bytes) => read_bytes,
+            Self::Delim => &[],
+        }
+    }
+}
+
+pub struct BufferedStreamReaderByteLender<BL>(PhantomData<BL>);
+
+impl<BL> ByteLender for BufferedStreamReaderByteLender<BL>
+where
+    BL: ByteLender,
+{
+    type ByteBuf<'a> = BufferedStreamReaderByteBuf<'a, BL::ByteBuf<'a>>
+    where
+        Self: 'a;
+}
+
+pub enum BufferedStreamReaderReadStreamState<P, S> {
+    ConsumeBuffer {
+        read_position: P,
+        read_size: S,
+        remainder: S,
+    },
+    ReanchorBuffer {
+        read_position: P,
+        remainder: S,
+    },
+    FillBuffer {
+        read_position: P,
+        remainder: S,
+    },
+    Done,
+}
+
+#[allow(unused)]
+pub struct BufferedStreamReaderReadStream<'a, R, RS, RB, P, S> {
+    state: BufferedStreamReaderReadStreamState<P, S>,
+
+    inner_stream: RS,
+    read_buffer: &'a mut AnchoredBuffer<RB, P>,
+
+    inner_size: S,
+
+    _phantom_data: PhantomData<R>,
+}
+
+impl<'x, R, RBL, RS, RB>
+    Stream<
+        FallibleByteLender<
+            BufferedStreamReaderByteLender<RBL>,
+            BufferedStreamReaderError<R::Error>,
+        >,
+    > for BufferedStreamReaderReadStream<'x, R, RS, RB, R::Position, R::Size>
+where
+    R: StreamRead<RBL>,
+    R::Error: 'static,
+    RBL: ByteLender + 'static,
+    RB: DerefMut<Target = [u8]>,
+    RS: Stream<FallibleByteLender<RBL, R::Error>>,
+{
+    async fn next<'a>(
+        &'a mut self,
+    ) -> Option<
+        <FallibleByteLender<
+            BufferedStreamReaderByteLender<RBL>,
+            BufferedStreamReaderError<R::Error>,
+        > as Lender>::Item<'a>,
+    >
+    where
+        FallibleByteLender<
+            BufferedStreamReaderByteLender<RBL>,
+            BufferedStreamReaderError<R::Error>,
+        >: 'a,
+    {
+        let (item, next_state) = match self.state {
+            BufferedStreamReaderReadStreamState::ConsumeBuffer {
+                read_position,
+                read_size,
+                remainder,
+            } => (
+                Some(
+                    self.read_buffer
+                        .read_at(read_position, read_size)
+                        .map(BufferedStreamReaderByteBuf::Buffered)
+                        .map_err(BufferedStreamReaderError::ReadBufferError),
+                ),
+                BufferedStreamReaderReadStreamState::FillBuffer {
+                    read_position: read_position + read_size.into(),
+                    remainder,
+                },
+            ),
+
+            BufferedStreamReaderReadStreamState::ReanchorBuffer {
+                read_position,
+                remainder,
+            } => {
+                self.read_buffer.re_anchor(read_position);
+                (
+                    Some(Ok(BufferedStreamReaderByteBuf::Delim)),
+                    BufferedStreamReaderReadStreamState::FillBuffer {
+                        read_position,
+                        remainder,
+                    },
+                )
+            }
+
+            BufferedStreamReaderReadStreamState::FillBuffer {
+                read_position,
+                remainder,
+            } if remainder == zero() || read_position >= self.inner_size.into() => {
+                (None, BufferedStreamReaderReadStreamState::Done)
+            }
+
+            BufferedStreamReaderReadStreamState::FillBuffer {
+                read_position,
+                remainder,
+            } if self.read_buffer.len() == self.read_buffer.capacity()
+                || read_position != self.read_buffer.end_position().ok()? =>
+            {
+                (
+                    Some(Ok(BufferedStreamReaderByteBuf::Delim)),
+                    BufferedStreamReaderReadStreamState::ReanchorBuffer {
+                        read_position,
+                        remainder,
+                    },
+                )
+            }
+
+            BufferedStreamReaderReadStreamState::FillBuffer {
+                read_position,
+                remainder,
+            } => {
+                let read_bytes = self
+                    .inner_stream
+                    .next()
+                    .await?
+                    .map_err(BufferedStreamReaderError::ReadError)
+                    .and_then(|x| {
+                        let avail_to_append = self.read_buffer.avail_to_append();
+
+                        self.read_buffer
+                            .append(&x.deref()[..avail_to_append])
+                            .map_err(BufferedStreamReaderError::ReadBufferError)
+                            .and(Ok(BufferedStreamReaderByteBuf::Read(x)))
+                    });
+
+                let read_bytes_len =
+                    R::Size::from_usize(read_bytes.as_ref().map(|x| x.len()).unwrap_or(0))?;
+
+                let remainder = remainder.checked_sub(&read_bytes_len).unwrap_or(zero());
+                let read_position = read_position + read_bytes_len.into();
+
+                (
+                    Some(read_bytes),
+                    BufferedStreamReaderReadStreamState::FillBuffer {
+                        read_position,
+                        remainder,
+                    },
+                )
+            }
+
+            BufferedStreamReaderReadStreamState::Done => {
+                (None, BufferedStreamReaderReadStreamState::Done)
+            }
+        };
+
+        self.state = next_state;
+
+        item
+    }
+}
+
+impl<R, RBL, RB> StreamRead<BufferedStreamReaderByteLender<RBL>>
+    for BufferedStreamReader<R, RB, R::Position, R::Size>
+where
+    R: StreamRead<RBL>,
+    R::Error: 'static,
+    RBL: ByteLender + 'static,
+    RB: DerefMut<Target = [u8]>,
+{
+    fn read_stream_at<'a>(
+        &'a mut self,
+        position: Self::Position,
+        size: Self::Size,
+    ) -> impl Stream<FallibleByteLender<BufferedStreamReaderByteLender<RBL>, Self::Error>> + 'a
+    where
+        BufferedStreamReaderByteLender<RBL>: 'a,
+    {
+        let inner_size = self.inner.size();
+
+        let (initial_state, inner_read_pos, inner_read_size) =
+            if self.read_buffer.contains_position(position) {
+                let avail_to_read_from_pos = self.read_buffer.avail_to_read_from_pos(position);
+                let avail_to_read_from_pos =
+                    R::Size::from_usize(avail_to_read_from_pos).unwrap_or(zero());
+
+                let remainder = size.checked_sub(&avail_to_read_from_pos).unwrap_or(zero());
+
+                (
+                    BufferedStreamReaderReadStreamState::ConsumeBuffer {
+                        read_position: position,
+                        read_size: avail_to_read_from_pos,
+                        remainder,
+                    },
+                    position + avail_to_read_from_pos.into(),
+                    remainder,
+                )
+            } else {
+                (
+                    BufferedStreamReaderReadStreamState::FillBuffer {
+                        read_position: position,
+                        remainder: size,
+                    },
+                    position,
+                    size,
+                )
+            };
+
+        BufferedStreamReaderReadStream {
+            state: initial_state,
+            inner_stream: self.inner.read_stream_at(inner_read_pos, inner_read_size),
+            read_buffer: &mut self.read_buffer,
+            inner_size,
+            _phantom_data: PhantomData::<R>,
+        }
+    }
+}
+
+#[allow(unused)]
+pub struct BufferedStreamReaderBufferedAppender<R, RB, AB, P, S> {
+    inner: R,
+
+    append_buffer: AnchoredBuffer<AB, P>,
+    read_buffer: AnchoredBuffer<RB, P>,
+
+    _phantom_data: PhantomData<S>,
+}
+
+pub enum BufferedStreamReaderBufferedAppenderError<E> {
+    AppendError(E),
+    ReadError(E),
+    RemoveError(E),
+    CloseError(E),
+
+    AppendBufferError(BufferError),
+    ReadBufferError(BufferError),
+
+    ReadGapEncontered,
+
+    ReadBeyondWrittenArea,
+    FlushIncomplete,
+
+    IntegerConversionError,
+}
+
+impl<E> From<IntegerConversionError> for BufferedStreamReaderBufferedAppenderError<E> {
+    fn from(_: IntegerConversionError) -> Self {
+        Self::IntegerConversionError
+    }
+}
+impl<R, RB, AB, P, S> AsyncRemove for BufferedStreamReaderBufferedAppender<R, RB, AB, P, S>
+where
+    R: AsyncRemove,
+{
+    fn remove(self) -> impl Future<Output = Result<(), Self::Error>> {
+        self.inner.remove().map_err(Self::Error::RemoveError)
+    }
+}
+
+impl<R, RB, AB, P, S> AsyncClose for BufferedStreamReaderBufferedAppender<R, RB, AB, P, S>
+where
+    R: AsyncClose,
+    RB: DerefMut<Target = [u8]>,
+{
+    async fn close(self) -> Result<(), Self::Error> {
+        self.inner.close().await.map_err(Self::Error::CloseError)
+    }
+}
+
+impl<R, RB, AB> SizedEntity
+    for BufferedStreamReaderBufferedAppender<R, RB, AB, R::Position, R::Size>
+where
+    R: SizedEntity,
+{
+    type Position = R::Position;
+
+    type Size = R::Size;
+
+    fn size(&self) -> Self::Size {
+        self.inner.size()
+    }
+}
+
+impl<R, RB, AB, P, S> FallibleEntity for BufferedStreamReaderBufferedAppender<R, RB, AB, P, S>
+where
+    R: FallibleEntity,
+{
+    type Error = BufferedStreamReaderBufferedAppenderError<R::Error>;
+}
+pub enum BufferedStreamReaderBufferedAppenderByteBuf<'a, T> {
+    Buffered(&'a [u8]),
+    Read(T),
+    Delim,
+}
+
+impl<'a, T> Deref for BufferedStreamReaderBufferedAppenderByteBuf<'a, T>
+where
+    T: Deref<Target = [u8]> + 'a,
+{
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Buffered(buffered) => buffered,
+            Self::Read(read_bytes) => read_bytes,
+            Self::Delim => &[],
+        }
+    }
+}
+
+pub struct BufferedStreamReaderBufferedAppenderByteLender<BL>(PhantomData<BL>);
+
+impl<BL> ByteLender for BufferedStreamReaderBufferedAppenderByteLender<BL>
+where
+    BL: ByteLender,
+{
+    type ByteBuf<'a> = BufferedStreamReaderBufferedAppenderByteBuf<'a, BL::ByteBuf<'a>>
+    where
+        Self: 'a;
+}
+
+pub enum BufferedStreamReaderBufferedAppenderReadStreamState<P, S> {
+    ConsumeReadBuffer {
+        read_position: P,
+        read_size: S,
+        remainder: S,
+    },
+    ReanchorReadBuffer {
+        read_position: P,
+        remainder: S,
+    },
+    FillReadBuffer {
+        read_position: P,
+        remainder: S,
+    },
+    ConsumeAppendBuffer {
+        read_position: P,
+        read_size: S,
+        remainder: S,
+    },
+
+    Remainder {
+        remainder: S,
+    },
+
+    Done,
+}
+
+#[allow(unused)]
+pub struct BufferedStreamReaderBufferedAppenderReadStream<'a, R, RS, RB, AB, P, S> {
+    state: BufferedStreamReaderBufferedAppenderReadStreamState<P, S>,
+
+    inner_stream: RS,
+
+    read_buffer: &'a mut AnchoredBuffer<RB, P>,
+    append_buffer: &'a AnchoredBuffer<AB, P>,
+
+    inner_size: S,
+
+    _phantom_data: PhantomData<R>,
+}
+
+impl<'x, R, RBL, RS, RB, AB>
+    Stream<
+        FallibleByteLender<
+            BufferedStreamReaderBufferedAppenderByteLender<RBL>,
+            BufferedStreamReaderBufferedAppenderError<R::Error>,
+        >,
+    > for BufferedStreamReaderBufferedAppenderReadStream<'x, R, RS, RB, AB, R::Position, R::Size>
+where
+    R: StreamRead<RBL>,
+    R::Error: 'static,
+    RBL: ByteLender + 'static,
+    RB: DerefMut<Target = [u8]>,
+    AB: DerefMut<Target = [u8]>,
+    RS: Stream<FallibleByteLender<RBL, R::Error>>,
+{
+    async fn next<'a>(
+        &'a mut self,
+    ) -> Option<
+        <FallibleByteLender<
+            BufferedStreamReaderBufferedAppenderByteLender<RBL>,
+            BufferedStreamReaderBufferedAppenderError<R::Error>,
+        > as Lender>::Item<'a>,
+    >
+    where
+        FallibleByteLender<
+            BufferedStreamReaderBufferedAppenderByteLender<RBL>,
+            BufferedStreamReaderBufferedAppenderError<R::Error>,
+        >: 'a,
+    {
+        let (item, next_state) = match self.state {
+            BufferedStreamReaderBufferedAppenderReadStreamState::ConsumeReadBuffer {
+                read_position,
+                read_size,
+                remainder,
+            } => (
+                Some(
+                    self.read_buffer
+                        .read_at(read_position, read_size)
+                        .map(BufferedStreamReaderBufferedAppenderByteBuf::Buffered)
+                        .map_err(BufferedStreamReaderBufferedAppenderError::ReadBufferError),
+                ),
+                BufferedStreamReaderBufferedAppenderReadStreamState::FillReadBuffer {
+                    read_position: read_position + read_size.into(),
+                    remainder,
+                },
+            ),
+
+            BufferedStreamReaderBufferedAppenderReadStreamState::ReanchorReadBuffer {
+                read_position,
+                remainder,
+            } => {
+                self.read_buffer.re_anchor(read_position);
+
+                (
+                    Some(Ok(BufferedStreamReaderBufferedAppenderByteBuf::Delim)),
+                    BufferedStreamReaderBufferedAppenderReadStreamState::FillReadBuffer {
+                        read_position,
+                        remainder,
+                    },
+                )
+            }
+
+            BufferedStreamReaderBufferedAppenderReadStreamState::FillReadBuffer {
+                read_position: _,
+                remainder,
+            } if remainder == zero() => (
+                None,
+                BufferedStreamReaderBufferedAppenderReadStreamState::Done,
+            ),
+
+            BufferedStreamReaderBufferedAppenderReadStreamState::FillReadBuffer {
+                read_position,
+                remainder,
+            } if read_position >= self.inner_size.into() => {
+                let avail_to_read_from_pos =
+                    self.append_buffer.avail_to_read_from_pos(read_position);
+                let avail_to_read_from_pos =
+                    R::Size::from_usize(avail_to_read_from_pos).unwrap_or(zero());
+
+                let remainder = remainder
+                    .checked_sub(&avail_to_read_from_pos)
+                    .unwrap_or(zero());
+
+                (
+                    Some(Ok(BufferedStreamReaderBufferedAppenderByteBuf::Delim)),
+                    BufferedStreamReaderBufferedAppenderReadStreamState::ConsumeAppendBuffer {
+                        read_position,
+                        read_size: avail_to_read_from_pos,
+                        remainder,
+                    },
+                )
+            }
+
+            BufferedStreamReaderBufferedAppenderReadStreamState::FillReadBuffer {
+                read_position,
+                remainder,
+            } if self.read_buffer.len() == self.read_buffer.capacity()
+                || read_position != self.read_buffer.end_position().ok()? =>
+            {
+                (
+                    Some(Ok(BufferedStreamReaderBufferedAppenderByteBuf::Delim)),
+                    BufferedStreamReaderBufferedAppenderReadStreamState::ReanchorReadBuffer {
+                        read_position,
+                        remainder,
+                    },
+                )
+            }
+
+            BufferedStreamReaderBufferedAppenderReadStreamState::FillReadBuffer {
+                read_position,
+                remainder,
+            } => match self.inner_stream.next().await {
+                Some(read_bytes) => {
+                    let read_bytes = read_bytes
+                        .map_err(BufferedStreamReaderBufferedAppenderError::ReadError)
+                        .and_then(|x| {
+                            let avail_to_append = self.read_buffer.avail_to_append();
+
+                            self.read_buffer
+                                .append(&x.deref()[..avail_to_append])
+                                .map_err(BufferedStreamReaderBufferedAppenderError::ReadBufferError)
+                                .and(Ok(BufferedStreamReaderBufferedAppenderByteBuf::Read(x)))
+                        });
+
+                    let read_bytes_len =
+                        R::Size::from_usize(read_bytes.as_ref().map(|x| x.len()).unwrap_or(0))?;
+
+                    let remainder = remainder.checked_sub(&read_bytes_len).unwrap_or(zero());
+                    let read_position = read_position + read_bytes_len.into();
+
+                    (
+                        Some(read_bytes),
+                        BufferedStreamReaderBufferedAppenderReadStreamState::FillReadBuffer {
+                            read_position,
+                            remainder,
+                        },
+                    )
+                }
+
+                None => (
+                    Some(Ok(BufferedStreamReaderBufferedAppenderByteBuf::Delim)),
+                    BufferedStreamReaderBufferedAppenderReadStreamState::FillReadBuffer {
+                        read_position: self.inner_size.into(),
+                        remainder,
+                    },
+                ),
+            },
+
+            BufferedStreamReaderBufferedAppenderReadStreamState::ConsumeAppendBuffer {
+                read_position,
+                read_size: _,
+                remainder: _,
+            } if read_position >= self.append_buffer.end_position().unwrap_or(zero()) => (
+                Some(Err(
+                    BufferedStreamReaderBufferedAppenderError::ReadBeyondWrittenArea,
+                )),
+                BufferedStreamReaderBufferedAppenderReadStreamState::Done,
+            ),
+
+            BufferedStreamReaderBufferedAppenderReadStreamState::ConsumeAppendBuffer {
+                read_position: _,
+                read_size,
+                remainder,
+            } if read_size == zero() && remainder > zero() => (
+                Some(Err(
+                    BufferedStreamReaderBufferedAppenderError::ReadGapEncontered,
+                )),
+                BufferedStreamReaderBufferedAppenderReadStreamState::Done,
+            ),
+
+            BufferedStreamReaderBufferedAppenderReadStreamState::ConsumeAppendBuffer {
+                read_position,
+                read_size,
+                remainder,
+            } => (
+                Some(
+                    self.append_buffer
+                        .read_at(read_position, read_size)
+                        .map(BufferedStreamReaderBufferedAppenderByteBuf::Buffered)
+                        .map_err(BufferedStreamReaderBufferedAppenderError::ReadBufferError),
+                ),
+                BufferedStreamReaderBufferedAppenderReadStreamState::Remainder { remainder },
+            ),
+
+            BufferedStreamReaderBufferedAppenderReadStreamState::Remainder { remainder }
+                if remainder > zero() =>
+            {
+                (
+                    Some(Err(
+                        BufferedStreamReaderBufferedAppenderError::ReadBeyondWrittenArea,
+                    )),
+                    BufferedStreamReaderBufferedAppenderReadStreamState::Done,
+                )
+            }
+
+            BufferedStreamReaderBufferedAppenderReadStreamState::Remainder { remainder: _ } => (
+                None,
+                BufferedStreamReaderBufferedAppenderReadStreamState::Done,
+            ),
+
+            BufferedStreamReaderBufferedAppenderReadStreamState::Done => (
+                None,
+                BufferedStreamReaderBufferedAppenderReadStreamState::Done,
+            ),
+        };
+
+        self.state = next_state;
+
+        item
+    }
+}
+
+impl<R, RBL, RB, AB> StreamRead<BufferedStreamReaderBufferedAppenderByteLender<RBL>>
+    for BufferedStreamReaderBufferedAppender<R, RB, AB, R::Position, R::Size>
+where
+    R: StreamRead<RBL>,
+    R::Error: 'static,
+    RBL: ByteLender + 'static,
+    RB: DerefMut<Target = [u8]>,
+    AB: DerefMut<Target = [u8]>,
+{
+    fn read_stream_at<'a>(
+        &'a mut self,
+        position: Self::Position,
+        size: Self::Size,
+    ) -> impl Stream<
+        FallibleByteLender<BufferedStreamReaderBufferedAppenderByteLender<RBL>, Self::Error>,
+    > + 'a
+    where
+        BufferedStreamReaderBufferedAppenderByteLender<RBL>: 'a,
+    {
+        let inner_size = self.inner.size();
+
+        let (initial_state, inner_read_pos, inner_read_size) = match position {
+            pos if self.append_buffer.contains_position(pos) => {
+                let avail_to_read_from_pos = self.append_buffer.avail_to_read_from_pos(pos);
+                let avail_to_read_from_pos =
+                    R::Size::from_usize(avail_to_read_from_pos).unwrap_or(zero());
+
+                let remainder = size.checked_sub(&avail_to_read_from_pos).unwrap_or(zero());
+
+                (
+                    BufferedStreamReaderBufferedAppenderReadStreamState::ConsumeAppendBuffer {
+                        read_position: pos,
+                        read_size: avail_to_read_from_pos,
+                        remainder,
+                    },
+                    zero(),
+                    zero(),
+                )
+            }
+
+            pos if self.read_buffer.contains_position(pos) => {
+                let avail_to_read_from_pos = self.read_buffer.avail_to_read_from_pos(position);
+                let avail_to_read_from_pos =
+                    R::Size::from_usize(avail_to_read_from_pos).unwrap_or(zero());
+
+                let remainder = size.checked_sub(&avail_to_read_from_pos).unwrap_or(zero());
+
+                (
+                    BufferedStreamReaderBufferedAppenderReadStreamState::ConsumeReadBuffer {
+                        read_position: position,
+                        read_size: avail_to_read_from_pos,
+                        remainder,
+                    },
+                    position + avail_to_read_from_pos.into(),
+                    remainder,
+                )
+            }
+
+            pos => (
+                BufferedStreamReaderBufferedAppenderReadStreamState::FillReadBuffer {
+                    read_position: pos,
+                    remainder: size,
+                },
+                pos,
+                self.append_buffer
+                    .anchor_position()
+                    .checked_sub(&pos)
+                    .unwrap_or(zero())
+                    .into(),
+            ),
+        };
+
+        BufferedStreamReaderBufferedAppenderReadStream {
+            state: initial_state,
+            inner_stream: self.inner.read_stream_at(inner_read_pos, inner_read_size),
+            read_buffer: &mut self.read_buffer,
+            append_buffer: &self.append_buffer,
+            inner_size,
+            _phantom_data: PhantomData::<R>,
         }
     }
 }
