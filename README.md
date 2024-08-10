@@ -38,7 +38,7 @@ This crate provides the following I/O related traits:
 | [`StreamAppend`]  | <code><i>Streaming </i>W I/O</code> | [`AsyncAppend`] (_trait impl_)                                                                                              |
 | [`AsyncTruncate`] | `W I/O`                             |                                                                                                                             |
 | [`AsyncRemove`]   | Management                          |                                                                                                                             |
-| [`AsyncClose`]    | Management                          | <img width="1000" id="full-width-cell" />                                                                                   |
+| [`AsyncClose`]    | Management                          |                                                                                                                             |
 
 > The "Wrapper Implemented on" column denotes on which underlying trait, the current trait has an impl with the help of a wrapper struct wrapping the mentioned trait.
 > For example, [`StreamRead`] is implemented by a wrapper struct [`AsyncReadStreamer`] which wraps an [`AsyncRead`] instance.
