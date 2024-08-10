@@ -20,16 +20,25 @@ laminarmq-io = { git = &quot;https://github.com/arindas/laminarmq-io.git&quot; }
 </code></pre></div><h3 id="overview"><a class="doc-anchor" href="#overview">§</a>Overview</h3>
 <p>This crate provides the following I/O related traits:</p>
 <div><table><thead><tr><th><strong>Trait</strong></th><th><strong>Type</strong></th><th><strong>Wrapper Implemented On</strong></th></tr></thead><tbody>
-<tr><td><a href="trait.AsyncRead.html" title="trait laminarmq_io::AsyncRead"><code>AsyncRead</code></a></td><td><code>R I/O</code></td><td><a href="trait.AsyncBufRead.html" title="trait laminarmq_io::AsyncBufRead"><code>AsyncBufRead</code></a> (<code>struct <i>BufferedReader*</i></code>),<br> <code>AsyncRead</code> (struct <a href="struct.DirectReaderBufferedAppender.html" title="struct laminarmq_io::DirectReaderBufferedAppender"><code>DirectReaderBufferedAppender</code></a>)</td></tr>
-<tr><td><a href="trait.AsyncBufRead.html" title="trait laminarmq_io::AsyncBufRead"><code>AsyncBufRead</code></a></td><td><code>R I/O</code></td><td>-</td></tr>
+<tr><td><a href="trait.AsyncRead.html" title="trait laminarmq_io::AsyncRead"><code>AsyncRead</code></a></td><td><code>R I/O</code></td><td><a href="trait.AsyncBufRead.html" title="trait laminarmq_io::AsyncBufRead"><code>AsyncBufRead</code></a> (<code>struct <i>BufferedReader*</i></code>),<br> <a href="trait.AsyncRead.html" title="trait laminarmq_io::AsyncRead"><code>AsyncRead</code></a> (struct <a href="struct.DirectReaderBufferedAppender.html" title="struct laminarmq_io::DirectReaderBufferedAppender"><code>DirectReaderBufferedAppender</code></a>)</td></tr>
+<tr><td><a href="trait.AsyncBufRead.html" title="trait laminarmq_io::AsyncBufRead"><code>AsyncBufRead</code></a></td><td><code>R I/O</code></td><td></td></tr>
 <tr><td><a href="trait.StreamRead.html" title="trait laminarmq_io::StreamRead"><code>StreamRead</code></a></td><td><em>Streaming</em> <code>R I/O</code></td><td><a href="trait.AsyncRead.html" title="trait laminarmq_io::AsyncRead"><code>AsyncRead</code></a> (struct <a href="struct.AsyncReadStreamer.html" title="struct laminarmq_io::AsyncReadStreamer"><code>AsyncReadStreamer</code></a>,<br> <code>struct <i>BufferedStreamReader*</i></code>)</td></tr>
 <tr><td><a href="trait.AsyncAppend.html" title="trait laminarmq_io::AsyncAppend"><code>AsyncAppend</code></a></td><td><code>W I/O</code></td><td><a href="trait.AsyncAppend.html" title="trait laminarmq_io::AsyncAppend"><code>AsyncAppend</code></a> (<code>struct <i>*BufferedAppender</i></code>)</td></tr>
 <tr><td><a href="trait.StreamAppend.html" title="trait laminarmq_io::StreamAppend"><code>StreamAppend</code></a></td><td><em>Streaming</em> <code>W I/O</code></td><td><a href="trait.AsyncAppend.html" title="trait laminarmq_io::AsyncAppend"><code>AsyncAppend</code></a> (<em>trait impl</em>)</td></tr>
-<tr><td><a href="trait.AsyncTruncate.html" title="trait laminarmq_io::AsyncTruncate"><code>AsyncTruncate</code></a></td><td><code>W I/O</code></td><td>-</td></tr>
-<tr><td><a href="trait.AsyncRemove.html" title="trait laminarmq_io::AsyncRemove"><code>AsyncRemove</code></a></td><td>Management</td><td>-</td></tr>
-<tr><td><a href="trait.AsyncClose.html" title="trait laminarmq_io::AsyncClose"><code>AsyncClose</code></a></td><td>Management</td><td>-</td></tr>
+<tr><td><a href="trait.AsyncTruncate.html" title="trait laminarmq_io::AsyncTruncate"><code>AsyncTruncate</code></a></td><td><code>W I/O</code></td><td></td></tr>
+<tr><td><a href="trait.AsyncRemove.html" title="trait laminarmq_io::AsyncRemove"><code>AsyncRemove</code></a></td><td>Management</td><td></td></tr>
+<tr><td><a href="trait.AsyncClose.html" title="trait laminarmq_io::AsyncClose"><code>AsyncClose</code></a></td><td>Management</td><td><img width="1000" id="full-width-cell" /></td></tr>
 </tbody></table>
-</div><br>
+</div>
+<blockquote>
+<p>The “Wrapper Implemented on” column denotes on which underlying trait, the current trait has an impl with the help of a wrapper struct wrapping the mentioned trait.
+For example, <a href="trait.StreamRead.html" title="trait laminarmq_io::StreamRead"><code>StreamRead</code></a> is implemented by a wrapper struct <a href="struct.AsyncReadStreamer.html" title="struct laminarmq_io::AsyncReadStreamer"><code>AsyncReadStreamer</code></a> which wraps an <a href="trait.AsyncRead.html" title="trait laminarmq_io::AsyncRead"><code>AsyncRead</code></a> instance.</p>
+<p>Some traits in this table also have direct impls on other trait types e.g:</p>
+<div class="example-wrap"><pre class="language-text"><code>impl&lt;T&gt; StreamAppend for T where T: AsyncAppend { /* ... */ }
+</code></pre></div>
+<p>They are marked with (<em>trait impl</em>).</p>
+</blockquote>
+<br>
 <p>This library makes the following improvments over existing I/O primitives in <code>laminarmq</code>:</p>
 <ul>
 <li>Provides traits at individual operaton level i.e <code>Read</code> / <code>Append</code> level as opposed to a unified <code>Storage</code> trait</li>
