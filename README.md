@@ -60,7 +60,7 @@ This library makes the following improvements over existing I/O primitives in `l
 
 - Provides traits at individual operaton level i.e `Read` / `Append` level as opposed to a unified `Storage` trait
 - All operations are exclusive with a `&mut self` receiver to avoid internal locks
-- Provides both streaming read and streaming write
+- Supports both streaming read and streaming write operations
 - Provides impls on both filessytem based APIs and cloud object storage APIs such as S3
 
 ## License
