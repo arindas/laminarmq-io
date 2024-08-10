@@ -13,7 +13,7 @@
   </a>
 </p>
 <p align="center">
-An attempt to rewrite <a href="https://github.com/arindas/laminarmq"><code>laminarmq</code></a> I/O layer
+An attempt to rewrite the <a href="https://github.com/arindas/laminarmq"><code>laminarmq</code></a> I/O layer
 to accommodate bounded memory overhead when reading and writing.
 </p>
 <h3 id="usage"><a class="doc-anchor" href="#usage">§</a>Usage</h3>
@@ -42,7 +42,7 @@ For example, <a href="trait.StreamRead.html" title="trait laminarmq_io::StreamRe
 <p>They are marked with (<em>trait impl</em>).</p>
 </blockquote>
 <br>
-<p>This library makes the following improvments over existing I/O primitives in <code>laminarmq</code>:</p>
+<p>This library makes the following improvements over existing I/O primitives in <code>laminarmq</code>:</p>
 <ul>
 <li>Provides traits at individual operaton level i.e <code>Read</code> / <code>Append</code> level as opposed to a unified <code>Storage</code> trait</li>
 <li>All operations are exclusive with a <code>&amp;mut self</code> receiver to avoid internal locks</li>
