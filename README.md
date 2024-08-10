@@ -32,18 +32,23 @@ This crate provides the following I/O related traits:
 | **Trait**         | **Type**            | **Wrapper Implemented On**                                                                                                  |
 | ----------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | [`AsyncRead`]     | `R I/O`             | [`AsyncBufRead`] (<code>struct <i>BufferedReader\*</i></code>),<br> [`AsyncRead`] (struct [`DirectReaderBufferedAppender`]) |
-| [`AsyncBufRead`]  | `R I/O`             | -                                                                                                                           |
+| [`AsyncBufRead`]  | `R I/O`             |                                                                                                                             |
 | [`StreamRead`]    | _Streaming_ `R I/O` | [`AsyncRead`] (struct [`AsyncReadStreamer`],<br> <code>struct <i>BufferedStreamReader\*</i></code>)                         |
 | [`AsyncAppend`]   | `W I/O`             | [`AsyncAppend`] (<code>struct <i>\*BufferedAppender</i></code>)                                                             |
 | [`StreamAppend`]  | _Streaming_ `W I/O` | [`AsyncAppend`] (_trait impl_)                                                                                              |
-| [`AsyncTruncate`] | `W I/O`             | -                                                                                                                           |
-| [`AsyncRemove`]   | Management          | -                                                                                                                           |
-| [`AsyncClose`]    | Management          | -                                                                                                                           |
+| [`AsyncTruncate`] | `W I/O`             |                                                                                                                             |
+| [`AsyncRemove`]   | Management          |                                                                                                                             |
+| [`AsyncClose`]    | Management          | <img width="1000" id="full-width-cell" />                                                                                   |
 
 > The "Wrapper Implemented on" column denotes on which underlying trait, the current trait has an impl with the help of a wrapper struct wrapping the mentioned trait.
 > For example, [`StreamRead`] is implemented by a wrapper struct [`AsyncReadStreamer`] which wraps an [`AsyncRead`] instance.
 >
-> Some traits in this table also have impls on other trait types e.g `impl<T> TraitA for T where T: TraitB { ... }`.<br>
+> Some traits in this table also have direct impls on other trait types e.g:
+>
+> ```text
+> impl<T> StreamAppend for T where T: AsyncAppend { /* ... */ }
+> ```
+>
 > They are marked with (_trait impl_).
 
 <br>
