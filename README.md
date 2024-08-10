@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-An attempt to rewrite <a href="https://github.com/arindas/laminarmq"><code>laminarmq</code></a> I/O layer
+An attempt to rewrite the <a href="https://github.com/arindas/laminarmq"><code>laminarmq</code></a> I/O layer
 to accommodate bounded memory overhead when reading and writing.
 </p>
 
@@ -56,7 +56,7 @@ This crate provides the following I/O related traits:
 
 <br>
 
-This library makes the following improvments over existing I/O primitives in `laminarmq`:
+This library makes the following improvements over existing I/O primitives in `laminarmq`:
 
 - Provides traits at individual operaton level i.e `Read` / `Append` level as opposed to a unified `Storage` trait
 - All operations are exclusive with a `&mut self` receiver to avoid internal locks
