@@ -10,7 +10,7 @@
     <img src="https://github.com/arindas/laminarmq-io/actions/workflows/rustdoc.yml/badge.svg">
   </a>
   <a href="https://github.com/arindas/laminarmq-io">
-    <img src="https://img.shields.io/badge/github-arindas/laminarmq--io-blue?logo=github&labelColor=black">
+    <img src="https://img.shields.io/badge/github-arindas/laminarmq--io-173f80?logo=github&labelColor=black">
   </a>
 </p>
 
