@@ -224,6 +224,17 @@ pub trait ByteLender {
         Self: 'a;
 }
 
+pub struct OwnedByteLender<T>(PhantomData<T>);
+
+impl<T> ByteLender for OwnedByteLender<T>
+where
+    T: Deref<Target = [u8]>,
+{
+    type ByteBuf<'a> = T
+    where
+        Self: 'a;
+}
+
 pub trait AsyncRead<B: ByteLender>: SizedEntity + FallibleEntity {
     fn read_at<'a>(
         &'a mut self,
