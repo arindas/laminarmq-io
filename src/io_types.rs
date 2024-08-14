@@ -401,10 +401,3 @@ where
         }
     }
 }
-
-pub trait PeekRead: SizedEntity + FallibleEntity {
-    #[allow(unused)]
-    fn peek_read(&self, position: Self::Position, size: Self::Size) -> Option<Bytes> {
-        None
-    }
-}

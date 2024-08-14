@@ -1,11 +1,12 @@
 use std::{
+    cmp::min,
     mem,
     ops::{Bound, Deref, DerefMut, RangeBounds},
 };
 
 use bytes::{Bytes, BytesMut};
 
-use crate::io_types::Quantifier;
+use crate::io_types::{Quantifier, ReadBytes};
 
 pub enum BufferBytes {
     Mut { bytes_mut: BytesMut },
@@ -235,7 +236,7 @@ where
         self.anchor_position = new_anchor_position;
     }
 
-    pub fn read_at<S>(&mut self, position: P, size: S) -> Result<Bytes, BufferError>
+    pub fn read_at<S>(&mut self, position: P, size: S) -> Result<ReadBytes<Bytes, S>, BufferError>
     where
         S: Quantifier,
     {
@@ -243,6 +244,16 @@ where
 
         let size = size.to_usize().ok_or(BufferError::IntegerConversionError)?;
 
-        self.get_read_slice(start..(start + size))
+        let size = min(size, self.avail_to_read_from_pos(position));
+
+        let read_bytes = self.get_read_slice(start..(start + size))?;
+
+        let read_len =
+            S::from_usize(read_bytes.len()).ok_or(BufferError::IntegerConversionError)?;
+
+        Ok(ReadBytes {
+            read_bytes,
+            read_len,
+        })
     }
 }
