@@ -618,10 +618,12 @@ where
             .await
             .map_err(DirectReaderBufferedAppenderError::AppendError)?;
 
+        // FIX: use flush_offset instead
         self.append_buffer
             .advance_anchor_by(write_len)
             .map_err(DirectReaderBufferedAppenderError::AppendBufferError)?;
 
+        // FIX: use write_len
         self.append_buffer
             .is_empty()
             .not()
@@ -804,7 +806,7 @@ where
             AppendBuffered,
         }
 
-        struct AdvanceAnchor;
+        struct AdvanceAnchor; // FIX: reanchor and clear instead
 
         let append_strategy = match bytes.len() {
             n if n >= self.append_buffer.capacity() => Action::Flush(AppendStrategy::Inner),

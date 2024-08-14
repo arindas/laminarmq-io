@@ -13,7 +13,7 @@ num = "0.4.2"
 tokio = { version = "1.37", features=["fs", "rt", "rt-multi-thread", "io-util", "sync"] }
 aws-config = { version = "1.1.7", features = ["behavior-version-latest"] }
 aws-sdk-s3 = "1.41.0"
-bytes = "1.6.0"
+bytes = "1.7.1"
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
 glommio = "0.9.0"

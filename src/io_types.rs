@@ -170,6 +170,10 @@ where
     }
 }
 
+pub trait AsyncFlush: FallibleEntity {
+    fn flush(&mut self) -> impl Future<Output = Result<(), Self::Error>>;
+}
+
 pub struct ReadBytes<T, S> {
     pub read_bytes: T,
     pub read_len: S,
@@ -395,5 +399,12 @@ where
             bytes_to_read: size,
             _phantom_data: PhantomData,
         }
+    }
+}
+
+pub trait PeekRead: SizedEntity + FallibleEntity {
+    #[allow(unused)]
+    fn peek_read(&self, position: Self::Position, size: Self::Size) -> Option<Bytes> {
+        None
     }
 }
