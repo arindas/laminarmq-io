@@ -110,7 +110,7 @@ pub trait StreamAppend: SizedEntity + FallibleEntity {
         &mut self,
         stream: &mut X,
         append_threshold: Option<Self::Size>,
-        truncate_on_err: bool,
+        rollback: bool,
     ) -> impl Future<Output = StreamAppendResult<Self::Position, Self::Size, Self::Error, XE>>
     where
         X: Stream<OwnedLender<Result<Bytes, XE>>>,
@@ -128,7 +128,7 @@ where
         &mut self,
         stream: &mut X,
         append_threshold: Option<Self::Size>,
-        truncate: bool,
+        rollback: bool,
     ) -> StreamAppendResult<Self::Position, Self::Size, Self::Error, XE>
     where
         X: Stream<OwnedLender<Result<Bytes, XE>>> + Unpin,
@@ -170,7 +170,7 @@ where
                     write_len,
                 }) => bytes_written += write_len,
 
-                Err(UnwrittenError { unwritten, err }) if truncate => {
+                Err(UnwrittenError { unwritten, err }) if rollback => {
                     self.truncate(write_position)
                         .await
                         .map_err(|err| UnwrittenError {
