@@ -85,11 +85,18 @@ pub struct AppendLocation<P, S> {
     pub write_len: S,
 }
 
+pub struct UnwrittenError<E> {
+    pub unwritten: Bytes,
+    pub err: E,
+}
+
 pub trait AsyncAppend: SizedEntity + FallibleEntity {
     fn append(
         &mut self,
         bytes: Bytes,
-    ) -> impl Future<Output = Result<AppendLocation<Self::Position, Self::Size>, Self::Error>>;
+    ) -> impl Future<
+        Output = Result<AppendLocation<Self::Position, Self::Size>, UnwrittenError<Self::Error>>,
+    >;
 }
 
 pub enum StreamAppendError<E, XE> {
@@ -103,16 +110,15 @@ pub trait StreamAppend: SizedEntity + FallibleEntity {
         &mut self,
         stream: &mut X,
         append_threshold: Option<Self::Size>,
-    ) -> impl Future<
-        Output = Result<
-            AppendLocation<Self::Position, Self::Size>,
-            StreamAppendError<Self::Error, XE>,
-        >,
-    >
+        truncate_on_err: bool,
+    ) -> impl Future<Output = StreamAppendResult<Self::Position, Self::Size, Self::Error, XE>>
     where
         X: Stream<OwnedLender<Result<Bytes, XE>>>,
         X: Unpin;
 }
+
+pub type StreamAppendResult<P, S, E, XE> =
+    Result<AppendLocation<P, S>, UnwrittenError<StreamAppendError<E, XE>>>;
 
 impl<A> StreamAppend for A
 where
@@ -122,7 +128,8 @@ where
         &mut self,
         stream: &mut X,
         append_threshold: Option<Self::Size>,
-    ) -> Result<AppendLocation<Self::Position, Self::Size>, StreamAppendError<Self::Error, XE>>
+        truncate: bool,
+    ) -> StreamAppendResult<Self::Position, Self::Size, Self::Error, XE>
     where
         X: Stream<OwnedLender<Result<Bytes, XE>>> + Unpin,
     {
@@ -131,21 +138,31 @@ where
             match match match (buf, append_threshold) {
                 (Ok(buf), Some(thresh))
                     if (bytes_written
-                        + A::Size::from_usize(buf.len()).ok_or(
-                            StreamAppendError::InnerError(IntegerConversionError.into()),
-                        )?)
+                        + A::Size::from_usize(buf.len()).ok_or(UnwrittenError {
+                            err: StreamAppendError::InnerError(IntegerConversionError.into()),
+                            unwritten: buf.clone(),
+                        })?)
                         <= thresh =>
                 {
                     Ok(buf)
                 }
-                (Ok(_), Some(_)) => Err(StreamAppendError::AppendOverflow),
+                (Ok(buf), Some(_)) => Err(UnwrittenError {
+                    err: StreamAppendError::AppendOverflow,
+                    unwritten: buf,
+                }),
                 (Ok(buf), None) => Ok(buf),
-                (Err(err), _) => Err(StreamAppendError::StreamReadError(err)),
+                (Err(err), _) => Err(UnwrittenError {
+                    err: StreamAppendError::StreamReadError(err),
+                    unwritten: Bytes::new(),
+                }),
             } {
                 Ok(buf) => self
                     .append(buf)
                     .await
-                    .map_err(StreamAppendError::InnerError),
+                    .map_err(|UnwrittenError { unwritten, err }| UnwrittenError {
+                        unwritten,
+                        err: StreamAppendError::InnerError(err),
+                    }),
                 Err(error) => Err(error),
             } {
                 Ok(AppendLocation {
@@ -153,12 +170,19 @@ where
                     write_len,
                 }) => bytes_written += write_len,
 
-                Err(error) => {
-                    return self
-                        .truncate(write_position)
+                Err(UnwrittenError { unwritten, err }) if truncate => {
+                    self.truncate(write_position)
                         .await
-                        .map_err(StreamAppendError::InnerError)
-                        .and_then(|_| Err(error))
+                        .map_err(|err| UnwrittenError {
+                            err: StreamAppendError::InnerError(err),
+                            unwritten: unwritten.clone(),
+                        })?;
+
+                    return Err(UnwrittenError { unwritten, err });
+                }
+
+                Err(error) => {
+                    return Err(error);
                 }
             }
         }
@@ -196,8 +220,8 @@ pub struct ReadBytesLen<T> {
 }
 
 pub struct UnreadError<E> {
-    unread: BytesMut,
-    err: E,
+    pub unread: BytesMut,
+    pub err: E,
 }
 
 pub trait AsyncBufRead: SizedEntity + FallibleEntity {
