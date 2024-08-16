@@ -1,7 +1,7 @@
 use std::{marker::PhantomData, ops::Deref};
 
 use bytes::Bytes;
-use num::ToPrimitive;
+use num::{zero, FromPrimitive, ToPrimitive};
 
 use crate::{
     anchored_buffer::{AnchoredBuffer, BufferError},
@@ -134,7 +134,7 @@ pub enum FlushState {
 
 impl<R> AsyncFlush for BufferedAppender<R, R::Position, R::Size>
 where
-    R: SizedEntity + AsyncFlush + AsyncAppend,
+    R: AsyncFlush + AsyncAppend,
 {
     async fn flush(&mut self) -> Result<(), Self::Error> {
         let flush_buffer_offset = match self.flush_state {
@@ -187,6 +187,120 @@ where
             }
 
             Err(UnwrittenError { unwritten: _, err }) => Err(Self::Error::AppendError(err)),
+        }
+    }
+}
+
+impl<R> AsyncAppend for BufferedAppender<R, R::Position, R::Size>
+where
+    R: AsyncAppend + AsyncFlush,
+{
+    async fn append(
+        &mut self,
+        bytes: Bytes,
+    ) -> Result<AppendLocation<Self::Position, Self::Size>, UnwrittenError<Self::Error>> {
+        enum AppendDest {
+            Buffer,
+            Inner,
+        }
+
+        enum Action {
+            Flush { dest_after_flush: AppendDest },
+            AppendToBuffer,
+        }
+
+        struct ReanchorBufferAfterFlushAndInnerAppend;
+
+        let buffer_end_position = self.buffer.end_position().map_err(|err| UnwrittenError {
+            unwritten: bytes.clone(),
+            err: Self::Error::AppendBufferError(err),
+        })?;
+
+        let bytes_len = R::Size::from_usize(bytes.len()).ok_or(UnwrittenError {
+            unwritten: bytes.clone(),
+            err: Self::Error::IntegerConversionError,
+        })?;
+
+        match match match match match bytes.len() {
+            n if n >= self.buffer.capacity() => Action::Flush {
+                dest_after_flush: AppendDest::Inner,
+            },
+            n if n >= self.buffer.avail_to_append() => Action::Flush {
+                dest_after_flush: AppendDest::Buffer,
+            },
+            _ => Action::AppendToBuffer,
+        } {
+            Action::Flush { dest_after_flush } => (
+                dest_after_flush,
+                self.flush().await.map_err(|err| UnwrittenError {
+                    unwritten: bytes.clone(),
+                    err,
+                }),
+            ),
+            Action::AppendToBuffer => (AppendDest::Buffer, Ok(())),
+        } {
+            (AppendDest::Buffer, Ok(_)) => {
+                let mut buffer_append_slice_mut =
+                    self.buffer
+                        .get_append_slice_mut()
+                        .map_err(|err| UnwrittenError {
+                            unwritten: bytes.clone(),
+                            err: Self::Error::AppendBufferError(err),
+                        })?;
+
+                buffer_append_slice_mut.copy_from_slice(&bytes);
+
+                self.buffer
+                    .unsplit_append_slice(buffer_append_slice_mut, bytes.len())
+                    .map_err(|err| UnwrittenError {
+                        unwritten: bytes.clone(),
+                        err: Self::Error::AppendBufferError(err),
+                    })?;
+
+                (
+                    None,
+                    Ok(AppendLocation {
+                        write_position: buffer_end_position,
+                        write_len: bytes_len,
+                    }),
+                )
+            }
+            (AppendDest::Inner, Ok(_)) => (
+                Some(ReanchorBufferAfterFlushAndInnerAppend),
+                self.inner
+                    .append(bytes)
+                    .await
+                    .map_err(|UnwrittenError { unwritten, err }| UnwrittenError {
+                        unwritten,
+                        err: Self::Error::AppendError(err),
+                    }),
+            ),
+            (_, Err(err)) => (None, Err(err)),
+        } {
+            (
+                Some(ReanchorBufferAfterFlushAndInnerAppend),
+                Ok(
+                    append_location @ AppendLocation {
+                        write_position,
+                        write_len,
+                    },
+                ),
+            ) => {
+                self.buffer.re_anchor(write_position + write_len.into());
+                Ok(append_location)
+            }
+            (_, result) => result,
+        } {
+            Ok(
+                append_location @ AppendLocation {
+                    write_position: _,
+                    write_len,
+                },
+            ) => {
+                self.size += write_len;
+                Ok(append_location)
+            }
+            Err(err) => Err(err),
         }
     }
 }

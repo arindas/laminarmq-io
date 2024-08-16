@@ -80,6 +80,7 @@ pub trait AsyncClose: FallibleEntity {
     fn close(self) -> impl Future<Output = Result<(), Self::Error>>;
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct AppendLocation<P, S> {
     pub write_position: P,
     pub write_len: S,
