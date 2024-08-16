@@ -1,13 +1,13 @@
 use std::{marker::PhantomData, ops::Deref};
 
 use bytes::Bytes;
-use num::{zero, FromPrimitive, ToPrimitive};
+use num::{FromPrimitive, ToPrimitive};
 
 use crate::{
     anchored_buffer::{AnchoredBuffer, BufferError},
     io_types::{
-        AppendLocation, AsyncAppend, AsyncFlush, AsyncRead, ByteLender, FallibleEntity,
-        IntegerConversionError, ReadBytes, SizedEntity, UnwrittenError,
+        AppendLocation, AsyncAppend, AsyncClose, AsyncFlush, AsyncRead, AsyncRemove, ByteLender,
+        FallibleEntity, IntegerConversionError, ReadBytes, SizedEntity, UnwrittenError,
     },
 };
 
@@ -302,5 +302,25 @@ where
             }
             Err(err) => Err(err),
         }
+    }
+}
+
+impl<R> AsyncClose for BufferedAppender<R, R::Position, R::Size>
+where
+    R: AsyncAppend + AsyncFlush + AsyncClose,
+{
+    async fn close(mut self) -> Result<(), Self::Error> {
+        self.flush().await?;
+
+        self.inner.close().await.map_err(Self::Error::CloseError)
+    }
+}
+
+impl<R, P, S> AsyncRemove for BufferedAppender<R, P, S>
+where
+    R: AsyncRemove,
+{
+    async fn remove(self) -> Result<(), Self::Error> {
+        self.inner.remove().await.map_err(Self::Error::RemoveError)
     }
 }
