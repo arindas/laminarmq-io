@@ -6,8 +6,8 @@ use num::{FromPrimitive, ToPrimitive};
 use crate::{
     anchored_buffer::{AnchoredBuffer, BufferError},
     io_types::{
-        AppendLocation, AsyncAppend, AsyncClose, AsyncFlush, AsyncRead, AsyncRemove, ByteLender,
-        FallibleEntity, IntegerConversionError, ReadBytes, SizedEntity, UnwrittenError,
+        AppendLocation, AsyncAppend, AsyncClose, AsyncFlush, AsyncRead, AsyncRemove, AsyncTruncate,
+        ByteLender, FallibleEntity, IntegerConversionError, ReadBytes, SizedEntity, UnwrittenError,
     },
 };
 
@@ -50,10 +50,7 @@ pub struct BufferedAppender<R, P, S> {
 }
 
 pub enum BufferedAppenderError<E> {
-    AppendError(E),
-    ReadError(E),
-    RemoveError(E),
-    CloseError(E),
+    InnerError(E),
 
     AppendBufferError(BufferError),
 
@@ -120,7 +117,7 @@ where
                 .read_at(pos, size)
                 .await
                 .map(|x| x.map(BufferedReadByteBuf::Read))
-                .map_err(Self::Error::ReadError),
+                .map_err(Self::Error::InnerError),
             _ => Err(Self::Error::ReadGapEncountered),
         }
     }
@@ -165,7 +162,7 @@ where
                 self.flush_state = FlushState::Clean;
                 self.buffer.re_anchor(write_position + write_len.into());
 
-                self.inner.flush().await.map_err(Self::Error::AppendError)?;
+                self.inner.flush().await.map_err(Self::Error::InnerError)?;
 
                 Ok(())
             }
@@ -181,12 +178,12 @@ where
                         .ok_or(Self::Error::InvalidWriteSize)?,
                 };
 
-                self.inner.flush().await.map_err(Self::Error::AppendError)?;
+                self.inner.flush().await.map_err(Self::Error::InnerError)?;
 
                 Err(Self::Error::FlushIncomplete)
             }
 
-            Err(UnwrittenError { unwritten: _, err }) => Err(Self::Error::AppendError(err)),
+            Err(UnwrittenError { unwritten: _, err }) => Err(Self::Error::InnerError(err)),
         }
     }
 }
@@ -272,7 +269,7 @@ where
                     .await
                     .map_err(|UnwrittenError { unwritten, err }| UnwrittenError {
                         unwritten,
-                        err: Self::Error::AppendError(err),
+                        err: Self::Error::InnerError(err),
                     }),
             ),
             (_, Err(err)) => (None, Err(err)),
@@ -312,7 +309,7 @@ where
     async fn close(mut self) -> Result<(), Self::Error> {
         self.flush().await?;
 
-        self.inner.close().await.map_err(Self::Error::CloseError)
+        self.inner.close().await.map_err(Self::Error::InnerError)
     }
 }
 
@@ -321,6 +318,33 @@ where
     R: AsyncRemove,
 {
     async fn remove(self) -> Result<(), Self::Error> {
-        self.inner.remove().await.map_err(Self::Error::RemoveError)
+        self.inner.remove().await.map_err(Self::Error::InnerError)
     }
 }
+
+impl<R> AsyncTruncate for BufferedAppender<R, R::Position, R::Size>
+where
+    R: AsyncTruncate,
+{
+    async fn truncate(&mut self, position: Self::Position) -> Result<(), Self::Error> {
+        if self.buffer.contains_position(position) {
+            self.buffer
+                .truncate(position)
+                .map_err(Self::Error::AppendBufferError)?;
+        } else {
+            self.inner
+                .truncate(position)
+                .await
+                .map_err(Self::Error::InnerError)?;
+
+            self.buffer.re_anchor(self.inner.size().into());
+        }
+
+        self.size = self.inner.size()
+            + R::Size::from_usize(self.buffer.len()).ok_or(Self::Error::IntegerConversionError)?;
+
+        Ok(())
+    }
+}
+
+// TODO: implement StreamRead for BufferedAppender

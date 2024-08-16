@@ -170,6 +170,15 @@ impl Buffer {
     pub fn contains_within_capacity(&self, pos: usize) -> bool {
         pos < self.capacity()
     }
+
+    pub fn truncate(&mut self, pos: usize) -> Result<(), BufferError> {
+        if !self.contains(pos) {
+            Err(BufferError::IndexOutOfBounds)
+        } else {
+            self.len = pos;
+            Ok(())
+        }
+    }
 }
 
 pub struct AnchoredBuffer<P> {
@@ -255,5 +264,11 @@ where
             read_bytes,
             read_len,
         })
+    }
+
+    pub fn truncate(&mut self, position: P) -> Result<(), BufferError> {
+        self.offset(position)
+            .ok_or(BufferError::IndexOutOfBounds)
+            .and_then(|pos| self.buffer.truncate(pos))
     }
 }
