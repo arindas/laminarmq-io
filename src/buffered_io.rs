@@ -1,14 +1,20 @@
-use std::{marker::PhantomData, ops::Deref};
+use std::{
+    cmp::{max, min},
+    marker::PhantomData,
+    ops::Deref,
+};
 
 use bytes::Bytes;
-use num::{FromPrimitive, ToPrimitive};
+use num::{zero, CheckedSub, FromPrimitive, ToPrimitive};
 
 use crate::{
     anchored_buffer::{AnchoredBuffer, BufferError},
     io_types::{
         AppendLocation, AsyncAppend, AsyncClose, AsyncFlush, AsyncRead, AsyncRemove, AsyncTruncate,
-        ByteLender, FallibleEntity, IntegerConversionError, ReadBytes, SizedEntity, UnwrittenError,
+        ByteLender, FallibleByteLender, FallibleEntity, IntegerConversionError, ReadBytes,
+        SizedEntity, StreamRead, UnwrittenError,
     },
+    stream::{self, Stream},
 };
 
 pub enum BufferedReadByteBuf<T> {
@@ -41,6 +47,24 @@ where
         Self: 'a;
 }
 
+pub struct OnceBufferedReadResult<E>(Option<Result<Bytes, E>>);
+
+impl<RBL, E> Stream<FallibleByteLender<BufferedByteLender<RBL>, E>> for OnceBufferedReadResult<E>
+where
+    RBL: ByteLender,
+{
+    async fn next<'a>(
+        &'a mut self,
+    ) -> Option<<FallibleByteLender<BufferedByteLender<RBL>, E> as stream::Lender>::Item<'a>>
+    where
+        FallibleByteLender<BufferedByteLender<RBL>, E>: 'a,
+    {
+        self.0
+            .take()
+            .map(|bytes| bytes.map(BufferedReadByteBuf::Buffered))
+    }
+}
+
 #[allow(unused)]
 pub struct BufferedAppender<R, P, S> {
     inner: R,
@@ -52,7 +76,7 @@ pub struct BufferedAppender<R, P, S> {
 pub enum BufferedAppenderError<E> {
     InnerError(E),
 
-    AppendBufferError(BufferError),
+    BufferError(BufferError),
 
     InvalidWriteSize,
 
@@ -111,7 +135,7 @@ where
                 .buffer
                 .read_at(pos, size)
                 .map(|x| x.map(BufferedReadByteBuf::Buffered))
-                .map_err(Self::Error::AppendBufferError),
+                .map_err(Self::Error::BufferError),
             pos if self.inner.contains(pos) => self
                 .inner
                 .read_at(pos, size)
@@ -144,7 +168,7 @@ where
         let bytes = self
             .buffer
             .get_read_slice(flush_buffer_offset..)
-            .map_err(Self::Error::AppendBufferError)?;
+            .map_err(Self::Error::BufferError)?;
 
         let bytes_len = bytes.len();
 
@@ -210,7 +234,7 @@ where
 
         let buffer_end_position = self.buffer.end_position().map_err(|err| UnwrittenError {
             unwritten: bytes.clone(),
-            err: Self::Error::AppendBufferError(err),
+            err: Self::Error::BufferError(err),
         })?;
 
         let bytes_len = R::Size::from_usize(bytes.len()).ok_or(UnwrittenError {
@@ -242,7 +266,7 @@ where
                         .get_append_slice_mut()
                         .map_err(|err| UnwrittenError {
                             unwritten: bytes.clone(),
-                            err: Self::Error::AppendBufferError(err),
+                            err: Self::Error::BufferError(err),
                         })?;
 
                 buffer_append_slice_mut.copy_from_slice(&bytes);
@@ -251,7 +275,7 @@ where
                     .unsplit_append_slice(buffer_append_slice_mut, bytes.len())
                     .map_err(|err| UnwrittenError {
                         unwritten: bytes.clone(),
-                        err: Self::Error::AppendBufferError(err),
+                        err: Self::Error::BufferError(err),
                     })?;
 
                 (
@@ -330,7 +354,7 @@ where
         if self.buffer.contains_position(position) {
             self.buffer
                 .truncate(position)
-                .map_err(Self::Error::AppendBufferError)?;
+                .map_err(Self::Error::BufferError)?;
         } else {
             self.inner
                 .truncate(position)
@@ -347,4 +371,63 @@ where
     }
 }
 
-// TODO: implement StreamRead for BufferedAppender
+impl<R, RBL> StreamRead<BufferedByteLender<RBL>> for BufferedAppender<R, R::Position, R::Size>
+where
+    R: StreamRead<RBL>,
+    R::Error: 'static,
+    RBL: ByteLender + 'static,
+{
+    fn read_stream_at<'a>(
+        &'a mut self,
+        position: Self::Position,
+        size: Self::Size,
+    ) -> impl Stream<FallibleByteLender<BufferedByteLender<RBL>, Self::Error>> + 'a
+    where
+        BufferedByteLender<R::Error>: 'a,
+    {
+        let buffer_anchor_position = self.buffer.anchor_position();
+
+        let inner_read_start = position;
+        let inner_read_end = min(self.inner.size().into(), position + size.into());
+        let expected_inner_read_size = inner_read_end
+            .checked_sub(&inner_read_start)
+            .unwrap_or(zero());
+
+        let inner_read_necessary =
+            expected_inner_read_size > zero() && position < buffer_anchor_position;
+
+        let buffer_read_start = max(buffer_anchor_position, position);
+        let buffer_read_end = min(position + size.into(), self.size().into());
+        let expected_buffer_read_size = buffer_read_end
+            .checked_sub(&buffer_read_start)
+            .unwrap_or(zero());
+
+        let buffered_read_necessary = expected_buffer_read_size > zero();
+
+        stream::chain(
+            stream::latch(
+                stream::map(
+                    self.inner
+                        .read_stream_at(inner_read_start, expected_inner_read_size.into()),
+                    |_: &(), stream_item_bytebuf_result| {
+                        stream_item_bytebuf_result
+                            .map_err(Self::Error::InnerError)
+                            .map(BufferedReadByteBuf::Read)
+                    },
+                ),
+                inner_read_necessary,
+            ),
+            OnceBufferedReadResult(buffered_read_necessary.then(|| {
+                self.buffer
+                    .read_at(buffer_read_start, expected_buffer_read_size)
+                    .map(
+                        |ReadBytes {
+                             read_bytes,
+                             read_len: _,
+                         }| read_bytes,
+                    )
+                    .map_err(Self::Error::BufferError)
+            })),
+        )
+    }
+}

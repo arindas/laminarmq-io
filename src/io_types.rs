@@ -367,7 +367,7 @@ pub trait StreamRead<B: ByteLender>: SizedEntity + FallibleEntity {
         B: 'a;
 }
 
-pub struct AsyncReadStreamer<'a, R, B, P, SZ> {
+pub struct AsyncReadStreamReadStream<'a, R, B, P, SZ> {
     reader: &'a mut R,
     position: P,
     bytes_to_read: SZ,
@@ -376,7 +376,7 @@ pub struct AsyncReadStreamer<'a, R, B, P, SZ> {
 }
 
 impl<'x, R, B> Stream<FallibleByteLender<B, R::Error>>
-    for AsyncReadStreamer<'x, R, B, R::Position, R::Size>
+    for AsyncReadStreamReadStream<'x, R, B, R::Position, R::Size>
 where
     R: AsyncRead<B>,
     B: ByteLender,
@@ -405,7 +405,29 @@ where
     }
 }
 
-impl<R, B> StreamRead<B> for R
+pub struct AsyncReadStreamRead<'a, R>(&'a mut R);
+
+impl<'a, R> SizedEntity for AsyncReadStreamRead<'a, R>
+where
+    R: SizedEntity,
+{
+    type Position = R::Position;
+
+    type Size = R::Size;
+
+    fn size(&self) -> Self::Size {
+        self.0.size()
+    }
+}
+
+impl<'a, R> FallibleEntity for AsyncReadStreamRead<'a, R>
+where
+    R: FallibleEntity,
+{
+    type Error = R::Error;
+}
+
+impl<'x, R, B> StreamRead<B> for AsyncReadStreamRead<'x, R>
 where
     R: AsyncRead<B>,
     B: ByteLender,
@@ -418,8 +440,8 @@ where
     where
         B: 'a,
     {
-        AsyncReadStreamer {
-            reader: self,
+        AsyncReadStreamReadStream {
+            reader: self.0,
             position,
             bytes_to_read: size,
             _phantom_data: PhantomData,
