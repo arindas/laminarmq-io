@@ -405,9 +405,29 @@ where
     }
 }
 
-pub struct AsyncReadStreamRead<'a, R>(&'a mut R);
+pub struct AsyncReadStreamRead<R>(R);
 
-impl<'a, R> SizedEntity for AsyncReadStreamRead<'a, R>
+impl<R> DerefMut for AsyncReadStreamRead<R> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<R> Deref for AsyncReadStreamRead<R> {
+    type Target = R;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<R> AsyncReadStreamRead<R> {
+    pub fn into_inner(self) -> R {
+        self.0
+    }
+}
+
+impl<R> SizedEntity for AsyncReadStreamRead<R>
 where
     R: SizedEntity,
 {
@@ -420,14 +440,14 @@ where
     }
 }
 
-impl<'a, R> FallibleEntity for AsyncReadStreamRead<'a, R>
+impl<R> FallibleEntity for AsyncReadStreamRead<R>
 where
     R: FallibleEntity,
 {
     type Error = R::Error;
 }
 
-impl<'x, R, B> StreamRead<B> for AsyncReadStreamRead<'x, R>
+impl<R, B> StreamRead<B> for AsyncReadStreamRead<R>
 where
     R: AsyncRead<B>,
     B: ByteLender,
@@ -441,7 +461,7 @@ where
         B: 'a,
     {
         AsyncReadStreamReadStream {
-            reader: self.0,
+            reader: &mut self.0,
             position,
             bytes_to_read: size,
             _phantom_data: PhantomData,
