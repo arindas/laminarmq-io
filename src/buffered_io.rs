@@ -10,9 +10,9 @@ use num::{zero, CheckedSub, FromPrimitive, ToPrimitive};
 use crate::{
     anchored_buffer::{AnchoredBuffer, BufferError},
     io_types::{
-        AppendLocation, AsyncAppend, AsyncClose, AsyncFlush, AsyncRead, AsyncRemove, AsyncTruncate,
-        ByteLender, FallibleByteLender, FallibleEntity, IntegerConversionError, ReadBytes,
-        SizedEntity, StreamRead, UnwrittenError,
+        AppendLocation, AsyncAppend, AsyncBufRead, AsyncClose, AsyncFlush, AsyncRead, AsyncRemove,
+        AsyncTruncate, ByteLender, FallibleByteLender, FallibleEntity, IntegerConversionError,
+        OwnedByteLender, ReadBytes, SizedEntity, StreamRead, UnreadError, UnwrittenError,
     },
     stream::{self, Stream},
 };
@@ -429,5 +429,124 @@ where
                     .map_err(Self::Error::BufferError)
             })),
         )
+    }
+}
+
+#[allow(unused)]
+pub struct BufferedReader<R, P, S> {
+    inner: R,
+    buffer: AnchoredBuffer<P>,
+    size: S,
+}
+
+pub enum BufferedReaderError<E> {
+    InnerError(E),
+    BufferError(BufferError),
+    ReadBeyondWrittenArea,
+    IntegerConversionError,
+}
+
+impl<E> From<IntegerConversionError> for BufferedReaderError<E> {
+    fn from(_: IntegerConversionError) -> Self {
+        Self::IntegerConversionError
+    }
+}
+
+impl<R, P, S> FallibleEntity for BufferedReader<R, P, S>
+where
+    R: FallibleEntity,
+{
+    type Error = BufferedReaderError<R::Error>;
+}
+
+impl<R> SizedEntity for BufferedReader<R, R::Position, R::Size>
+where
+    R: SizedEntity,
+{
+    type Position = R::Position;
+
+    type Size = R::Size;
+
+    fn size(&self) -> Self::Size {
+        self.size
+    }
+}
+
+impl<R> AsyncRead<OwnedByteLender<Bytes>> for BufferedReader<R, R::Position, R::Size>
+where
+    R: AsyncBufRead,
+{
+    async fn read_at<'a>(
+        &'a mut self,
+        position: Self::Position,
+        size: Self::Size,
+    ) -> Result<
+        ReadBytes<<OwnedByteLender<Bytes> as ByteLender>::ByteBuf<'a>, Self::Size>,
+        Self::Error,
+    >
+    where
+        OwnedByteLender<Bytes>: 'a,
+    {
+        struct Reanchor<P>(P);
+
+        struct Fill<P>(P);
+
+        enum ReadSource {
+            Buffer,
+        }
+
+        let buffer_end_position = self
+            .buffer
+            .end_position()
+            .map_err(Self::Error::BufferError)?;
+
+        match match match match position {
+            pos if !self.contains(pos) => Err(Self::Error::ReadBeyondWrittenArea),
+            pos if self.buffer.contains_position(pos) => Ok((None, None, ReadSource::Buffer)),
+            pos if self.buffer.contains_position_within_capacity(pos)
+                && pos >= buffer_end_position =>
+            {
+                Ok((None, Some(Fill(pos)), ReadSource::Buffer))
+            }
+            pos => Ok((Some(Reanchor(pos)), Some(Fill(pos)), ReadSource::Buffer)),
+        } {
+            Ok((Some(Reanchor(pos)), fill, source)) => {
+                self.buffer.re_anchor(pos);
+
+                Ok((fill, source))
+            }
+            Ok((None, fill, source)) => Ok((fill, source)),
+            Err(err) => Err(err),
+        } {
+            Ok((Some(Fill(pos)), source)) => {
+                let append_buffer = self
+                    .buffer
+                    .get_append_slice_mut()
+                    .map_err(Self::Error::BufferError)?;
+
+                let (append_bytes_mut, bytes_written) =
+                    match self.inner.read_at_buf(pos, append_buffer).await {
+                        Ok(ReadBytes {
+                            read_bytes,
+                            read_len,
+                        }) => (read_bytes, read_len.to_usize().unwrap_or(0)),
+                        Err(UnreadError { unread, err: _ }) => (unread, 0),
+                    };
+
+                self.buffer
+                    .unsplit_append_slice(append_bytes_mut, bytes_written)
+                    .map_err(Self::Error::BufferError)?;
+
+                Ok(source)
+            }
+            Ok((None, source)) => Ok(source),
+            Err(err) => Err(err),
+        } {
+            Ok(ReadSource::Buffer) => self
+                .buffer
+                .read_at(position, size)
+                .map_err(Self::Error::BufferError),
+            Err(err) => Err(err),
+        }
     }
 }
