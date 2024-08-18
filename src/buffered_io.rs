@@ -4,7 +4,7 @@ use std::{
     ops::Deref,
 };
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use num::{zero, CheckedSub, FromPrimitive, ToPrimitive};
 
 use crate::{
@@ -143,6 +143,63 @@ where
                 .map(|x| x.map(BufferedReadByteBuf::Read))
                 .map_err(Self::Error::InnerError),
             _ => Err(Self::Error::ReadGapEncountered),
+        }
+    }
+}
+
+impl<R> AsyncBufRead for BufferedAppender<R, R::Position, R::Size>
+where
+    R: AsyncBufRead,
+{
+    async fn read_at_buf(
+        &mut self,
+        position: Self::Position,
+        mut buffer: BytesMut,
+    ) -> Result<ReadBytes<BytesMut, Self::Size>, UnreadError<Self::Error>> {
+        let provided_buffer_len =
+            R::Size::from_usize(buffer.len()).ok_or(Self::Error::IntegerConversionError);
+
+        #[allow(clippy::blocks_in_conditions)]
+        match match (provided_buffer_len, position) {
+            (Ok(_), pos) if !self.contains(pos) => Err(Self::Error::ReadBeyondWrittenArea),
+            (Ok(provided_buffer_len), pos) if self.buffer.contains_position(pos) => self
+                .buffer
+                .read_at(pos, provided_buffer_len)
+                .map_err(Self::Error::BufferError)
+                .map(
+                    |ReadBytes {
+                         read_bytes,
+                         read_len,
+                     }| {
+                        buffer.copy_from_slice(&read_bytes);
+                        read_len
+                    },
+                ),
+            (Ok(_), pos) if self.inner.contains(pos) => {
+                match self.inner.read_at_buf(pos, buffer).await {
+                    Ok(ReadBytes {
+                        read_bytes,
+                        read_len,
+                    }) => {
+                        buffer = read_bytes;
+                        Ok(read_len)
+                    }
+                    Err(UnreadError { unread, err }) => {
+                        buffer = unread;
+                        Err(Self::Error::InnerError(err))
+                    }
+                }
+            }
+            _ => Err(Self::Error::ReadGapEncountered),
+        } {
+            Ok(read_len) => Ok(ReadBytes {
+                read_bytes: buffer,
+                read_len,
+            }),
+            Err(err) => Err(UnreadError {
+                unread: buffer,
+                err,
+            }),
         }
     }
 }
@@ -546,6 +603,102 @@ where
                 .buffer
                 .read_at(position, size)
                 .map_err(Self::Error::BufferError),
+            Err(err) => Err(err),
+        }
+    }
+}
+
+impl<R, BL> AsyncRead<BufferedByteLender<BL>> for BufferedReader<R, R::Position, R::Size>
+where
+    R: AsyncRead<BL>,
+    BL: ByteLender,
+{
+    async fn read_at<'a>(
+        &'a mut self,
+        position: Self::Position,
+        size: Self::Size,
+    ) -> Result<
+        ReadBytes<<BufferedByteLender<BL> as ByteLender>::ByteBuf<'a>, Self::Size>,
+        Self::Error,
+    >
+    where
+        BufferedByteLender<BL>: 'a,
+    {
+        struct Reanchor<P>(P);
+
+        struct Fill<P>(P);
+
+        enum ReadSource {
+            Buffer,
+            Inner,
+        }
+
+        let buffer_end_position = self
+            .buffer
+            .end_position()
+            .map_err(Self::Error::BufferError)?;
+
+        let buffer_capacitty = R::Size::from_usize(self.buffer.capacity())
+            .ok_or(Self::Error::IntegerConversionError)?;
+
+        match match match match position {
+            pos if !self.contains(pos) => Err(Self::Error::ReadBeyondWrittenArea),
+            pos if self.buffer.contains_position(pos) => Ok((None, None, ReadSource::Buffer)),
+            pos if self.buffer.contains_position_within_capacity(pos)
+                && pos >= buffer_end_position =>
+            {
+                Ok((None, Some(Fill(pos)), ReadSource::Buffer))
+            }
+            pos if size <= buffer_capacitty => {
+                Ok((Some(Reanchor(pos)), Some(Fill(pos)), ReadSource::Buffer))
+            }
+            _ => Ok((None, None, ReadSource::Inner)),
+        } {
+            Ok((Some(Reanchor(pos)), fill, source)) => {
+                self.buffer.re_anchor(pos);
+
+                Ok((fill, source))
+            }
+            Ok((None, fill, source)) => Ok((fill, source)),
+            Err(err) => Err(err),
+        } {
+            Ok((Some(Fill(pos)), source)) => {
+                let mut append_buffer = self
+                    .buffer
+                    .get_append_slice_mut()
+                    .map_err(Self::Error::BufferError)?;
+
+                let ReadBytes {
+                    read_bytes,
+                    read_len,
+                } = self
+                    .inner
+                    .read_at(pos, size)
+                    .await
+                    .map_err(Self::Error::InnerError)?;
+
+                append_buffer.copy_from_slice(&read_bytes);
+
+                self.buffer
+                    .unsplit_append_slice(append_buffer, read_len.to_usize().unwrap_or(0))
+                    .map_err(Self::Error::BufferError)?;
+
+                Ok(source)
+            }
+            Ok((None, source)) => Ok(source),
+            Err(err) => Err(err),
+        } {
+            Ok(ReadSource::Buffer) => self
+                .buffer
+                .read_at(position, size)
+                .map(|x| x.map(BufferedReadByteBuf::Buffered))
+                .map_err(Self::Error::BufferError),
+            Ok(ReadSource::Inner) => self
+                .inner
+                .read_at(position, size)
+                .await
+                .map(|x| x.map(BufferedReadByteBuf::Read))
+                .map_err(Self::Error::InnerError),
             Err(err) => Err(err),
         }
     }
