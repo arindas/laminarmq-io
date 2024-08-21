@@ -14,7 +14,7 @@ use crate::{
         AsyncTruncate, ByteLender, FallibleByteLender, FallibleEntity, IntegerConversionError,
         OwnedByteLender, ReadBytes, SizedEntity, StreamRead, UnreadError, UnwrittenError,
     },
-    stream::{self, Stream},
+    stream::{self, Lender, Stream},
 };
 
 pub enum BufferedReadByteBuf<T> {
@@ -55,7 +55,7 @@ where
 {
     async fn next<'a>(
         &'a mut self,
-    ) -> Option<<FallibleByteLender<BufferedByteLender<RBL>, E> as stream::Lender>::Item<'a>>
+    ) -> Option<<FallibleByteLender<BufferedByteLender<RBL>, E> as Lender>::Item<'a>>
     where
         FallibleByteLender<BufferedByteLender<RBL>, E>: 'a,
     {
@@ -701,5 +701,173 @@ where
                 .map_err(Self::Error::InnerError),
             Err(err) => Err(err),
         }
+    }
+}
+
+#[allow(unused)]
+enum BufferedReaderStreamReadState<P, S> {
+    ConsumeBuffer {
+        buffer_read_position: P,
+        buffer_read_size: S,
+
+        remainder: S,
+    },
+
+    FillBuffer {
+        inner_read_position: P,
+        remainder: S,
+    },
+
+    ReanchorBuffer {
+        anchor_position: P,
+        remainder: S,
+    },
+
+    Done,
+}
+
+#[allow(unused)]
+pub struct BufferedReaderStreamReadStream<'a, R, RS, P, S> {
+    state: BufferedReaderStreamReadState<P, S>,
+
+    inner_stream_read_stream: RS,
+
+    buffer: &'a mut AnchoredBuffer<P>,
+
+    inner_size: S,
+
+    _phantom_data: PhantomData<R>,
+}
+
+pub type FallibleBufferedReaderByteLender<RBL, E> =
+    FallibleByteLender<BufferedByteLender<RBL>, BufferedReaderError<E>>;
+
+impl<'x, R, RBL, RS> Stream<FallibleBufferedReaderByteLender<RBL, R::Error>>
+    for BufferedReaderStreamReadStream<'x, R, RS, R::Position, R::Size>
+where
+    R: StreamRead<RBL>,
+    R::Error: 'static,
+    RBL: ByteLender + 'static,
+    RS: Stream<FallibleByteLender<RBL, R::Error>>,
+{
+    async fn next<'a>(
+        &'a mut self,
+    ) -> Option<<FallibleBufferedReaderByteLender<RBL, R::Error> as Lender>::Item<'a>>
+    where
+        FallibleBufferedReaderByteLender<RBL, R::Error>: 'a,
+    {
+        let (item, next_state) = match self.state {
+            BufferedReaderStreamReadState::ConsumeBuffer {
+                buffer_read_position,
+                buffer_read_size,
+                remainder,
+            } => (
+                Some(
+                    self.buffer
+                        .read_at(buffer_read_position, buffer_read_size)
+                        .map_err(BufferedReaderError::BufferError)
+                        .map(
+                            |ReadBytes {
+                                 read_bytes,
+                                 read_len: _,
+                             }| {
+                                BufferedReadByteBuf::Buffered(read_bytes)
+                            },
+                        ),
+                ),
+                BufferedReaderStreamReadState::FillBuffer {
+                    inner_read_position: buffer_read_position + buffer_read_size.into(),
+                    remainder,
+                },
+            ),
+
+            BufferedReaderStreamReadState::FillBuffer {
+                inner_read_position,
+                remainder,
+            } if remainder == zero() || inner_read_position >= self.inner_size.into() => {
+                (None, BufferedReaderStreamReadState::Done)
+            }
+
+            BufferedReaderStreamReadState::FillBuffer {
+                inner_read_position,
+                remainder,
+            } => match self.inner_stream_read_stream.next().await {
+                Some(Ok(read_bytes)) if read_bytes.len() > self.buffer.avail_to_append() => {
+                    let read_bytes_len = read_bytes.len();
+                    let new_anchor_position =
+                        R::Position::from_usize(read_bytes_len).map(|x| x + inner_read_position);
+
+                    let remainder = R::Size::from_usize(read_bytes_len)
+                        .and_then(|read_bytes_len| remainder.checked_sub(&read_bytes_len));
+
+                    match (new_anchor_position, remainder) {
+                        (Some(anchor_position), Some(rem)) => (
+                            Some(Ok(BufferedReadByteBuf::Read(read_bytes))),
+                            BufferedReaderStreamReadState::ReanchorBuffer {
+                                anchor_position,
+                                remainder: rem,
+                            },
+                        ),
+                        _ => (
+                            Some(Err(BufferedReaderError::IntegerConversionError)),
+                            BufferedReaderStreamReadState::Done,
+                        ),
+                    }
+                }
+
+                Some(Ok(read_bytes)) => {
+                    let read_bytes_len = read_bytes.len();
+                    let new_inner_read_position =
+                        R::Position::from_usize(read_bytes_len).map(|x| x + inner_read_position);
+
+                    let remainder = R::Size::from_usize(read_bytes_len)
+                        .and_then(|read_bytes_len| remainder.checked_sub(&read_bytes_len));
+
+                    let buffer_append_result = self
+                        .buffer
+                        .get_append_slice_mut()
+                        .map(|mut x| {
+                            x.copy_from_slice(&read_bytes);
+                            x
+                        })
+                        .and_then(|append_bytes_mut| {
+                            self.buffer
+                                .unsplit_append_slice(append_bytes_mut, read_bytes.len())
+                        });
+
+                    match (new_inner_read_position, remainder, buffer_append_result) {
+                        (_, _, Err(err)) => (
+                            Some(Err(BufferedReaderError::BufferError(err))),
+                            BufferedReaderStreamReadState::Done,
+                        ),
+                        (Some(pos), Some(rem), Ok(())) => (
+                            Some(Ok(BufferedReadByteBuf::Read(read_bytes))),
+                            BufferedReaderStreamReadState::FillBuffer {
+                                inner_read_position: pos,
+                                remainder: rem,
+                            },
+                        ),
+
+                        _ => (
+                            Some(Err(BufferedReaderError::IntegerConversionError)),
+                            BufferedReaderStreamReadState::Done,
+                        ),
+                    }
+                }
+
+                Some(Err(err)) => (
+                    Some(Err(BufferedReaderError::InnerError(err))),
+                    BufferedReaderStreamReadState::Done,
+                ),
+
+                None => (None, BufferedReaderStreamReadState::Done),
+            },
+
+            _ => todo!(),
+        };
+
+        self.state = next_state;
+
+        item
     }
 }
