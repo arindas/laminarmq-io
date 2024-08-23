@@ -7,3 +7,11 @@ pub mod io_types;
 pub mod legacy;
 pub mod object_storage;
 pub mod stream;
+
+pub mod prelude {
+    pub use crate::buffered_io::*;
+    pub use crate::io_types::*;
+    pub use crate::stream::*;
+}
+
+pub use prelude::*;
