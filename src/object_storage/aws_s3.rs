@@ -1,7 +1,9 @@
-use crate::{
-    stream, AppendLocation, AsyncAppend, AsyncClose, AsyncRemove, AsyncTruncate, ByteLender,
-    FallibleByteLender, FallibleEntity, IntegerConversionError, SizedEntity, Stream, StreamRead,
+use crate::io_types::{
+    AppendLocation, AsyncAppend, AsyncClose, AsyncRemove, AsyncTruncate, ByteLender,
+    FallibleByteLender, FallibleEntity, IntegerConversionError, SizedEntity, StreamRead,
+    UnwrittenError,
 };
+use crate::stream::{self, Stream};
 use aws_sdk_s3::{
     operation::get_object::GetObjectOutput,
     primitives::{ByteStream, ByteStreamError},
@@ -304,8 +306,8 @@ where
 {
     async fn append(
         &mut self,
-        bytes: &[u8],
-    ) -> Result<AppendLocation<Self::Position, Self::Size>, Self::Error> {
+        bytes: Bytes,
+    ) -> Result<AppendLocation<Self::Position, Self::Size>, UnwrittenError<Self::Error>> {
         let part = self.part_size_map.append_part_with_part_size(bytes.len());
 
         self.client
@@ -317,10 +319,13 @@ where
                 self.part_size_map.len() - 1,
                 PART_EXTENSION
             ))
-            .body(bytes.to_vec().into())
+            .body(bytes.clone().into())
             .send()
             .await
-            .map_err(|err| AwsS3Error::AwsSdkError(err.to_string()))?;
+            .map_err(|err| UnwrittenError {
+                err: AwsS3Error::AwsSdkError(err.to_string()),
+                unwritten: bytes,
+            })?;
 
         Ok(AppendLocation {
             write_position: part.offset,
