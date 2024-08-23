@@ -5,8 +5,8 @@ use glommio::{
 };
 
 use crate::io_types::{
-    AppendLocation, AsyncAppend, AsyncClose, AsyncRead, AsyncRemove, AsyncTruncate, ByteLender,
-    FallibleEntity, IntegerConversionError, OwnedByteLender, ReadBytes, SizedEntity,
+    AppendLocation, AsyncAppend, AsyncClose, AsyncFlush, AsyncRead, AsyncRemove, AsyncTruncate,
+    ByteLender, FallibleEntity, IntegerConversionError, OwnedByteLender, ReadBytes, SizedEntity,
     UnwrittenError,
 };
 
@@ -121,6 +121,15 @@ impl AsyncRead<OwnedByteLender<ReadResult>> for BufferedFile {
     }
 }
 
+impl AsyncFlush for BufferedFile {
+    async fn flush(&mut self) -> Result<(), Self::Error> {
+        self.inner
+            .fdatasync()
+            .await
+            .map_err(Self::Error::InnerError)
+    }
+}
+
 impl AsyncRemove for BufferedFile {
     async fn remove(self) -> Result<(), Self::Error> {
         self.inner.remove().await.map_err(Self::Error::InnerError)
@@ -128,7 +137,8 @@ impl AsyncRemove for BufferedFile {
 }
 
 impl AsyncClose for BufferedFile {
-    async fn close(self) -> Result<(), Self::Error> {
+    async fn close(mut self) -> Result<(), Self::Error> {
+        self.flush().await?;
         self.inner.close().await.map_err(Self::Error::InnerError)
     }
 }

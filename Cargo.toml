@@ -17,3 +17,4 @@ bytes = "1.7.1"
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
 glommio = "0.9.0"
+tokio-uring = { version = "0.5.0", features = ["bytes"] }

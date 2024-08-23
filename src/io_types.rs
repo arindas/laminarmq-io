@@ -397,6 +397,10 @@ where
 
         let read_bytes = read_bytes.ok()?;
 
+        if read_bytes.read_len == zero() {
+            return None;
+        }
+
         self.position += read_bytes.read_len.into();
 
         self.bytes_to_read -= read_bytes.read_len;

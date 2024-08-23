@@ -10,7 +10,7 @@ use tokio::{
 };
 
 use crate::io_types::{
-    AppendLocation, AsyncAppend, AsyncBufRead, AsyncClose, AsyncRemove, AsyncTruncate,
+    AppendLocation, AsyncAppend, AsyncBufRead, AsyncClose, AsyncFlush, AsyncRemove, AsyncTruncate,
     FallibleEntity, IntegerConversionError, ReadBytes, SizedEntity, UnreadError, UnwrittenError,
 };
 
@@ -236,6 +236,12 @@ impl AsyncBufRead for TokioFile<RandomRead, true> {
     }
 }
 
+impl<K, const FA: bool> AsyncFlush for TokioFile<K, FA> {
+    async fn flush(&mut self) -> Result<(), Self::Error> {
+        self.inner.flush().await.map_err(Self::Error::IoError)
+    }
+}
+
 impl<K, const FA: bool> AsyncRemove for TokioFile<K, FA> {
     async fn remove(self) -> Result<(), Self::Error> {
         tokio::fs::remove_file(self.backing_file_path)
@@ -246,7 +252,7 @@ impl<K, const FA: bool> AsyncRemove for TokioFile<K, FA> {
 
 impl<K, const FA: bool> AsyncClose for TokioFile<K, FA> {
     async fn close(mut self) -> Result<(), Self::Error> {
-        self.inner.flush().await.map_err(Self::Error::IoError)?;
+        self.flush().await?;
 
         drop(self.inner);
 

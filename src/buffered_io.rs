@@ -977,11 +977,21 @@ where
     }
 }
 
+impl<R, P, S> AsyncFlush for BufferedReader<R, P, S>
+where
+    R: AsyncFlush,
+{
+    async fn flush(&mut self) -> Result<(), Self::Error> {
+        self.inner.flush().await.map_err(Self::Error::InnerError)
+    }
+}
+
 impl<R, P, S> AsyncClose for BufferedReader<R, P, S>
 where
-    R: AsyncClose,
+    R: AsyncClose + AsyncFlush,
 {
-    async fn close(self) -> Result<(), Self::Error> {
+    async fn close(mut self) -> Result<(), Self::Error> {
+        self.inner.flush().await.map_err(Self::Error::InnerError)?;
         self.inner.close().await.map_err(Self::Error::InnerError)
     }
 }
