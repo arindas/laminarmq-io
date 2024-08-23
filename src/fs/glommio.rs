@@ -1,11 +1,13 @@
+use bytes::Bytes;
 use glommio::{
     io::{BufferedFile as BufferedFile_, ReadResult},
     GlommioError,
 };
 
-use crate::{
-    AppendLocation, AsyncAppend, AsyncClose, AsyncRead, AsyncRemove, AsyncTruncate, FallibleEntity,
-    IntegerConversionError, OwnedByteLender, ReadBytes, SizedEntity,
+use crate::io_types::{
+    AppendLocation, AsyncAppend, AsyncClose, AsyncRead, AsyncRemove, AsyncTruncate, ByteLender,
+    FallibleEntity, IntegerConversionError, OwnedByteLender, ReadBytes, SizedEntity,
+    UnwrittenError,
 };
 
 pub enum BufferedFileError {
@@ -59,17 +61,23 @@ impl AsyncTruncate for BufferedFile {
 impl AsyncAppend for BufferedFile {
     async fn append(
         &mut self,
-        bytes: &[u8],
-    ) -> Result<AppendLocation<Self::Position, Self::Size>, Self::Error> {
+        bytes: Bytes,
+    ) -> Result<AppendLocation<Self::Position, Self::Size>, UnwrittenError<Self::Error>> {
         let write_position: Self::Position = self.size;
 
         let write_len: Self::Size = self
             .inner
-            .write_at(bytes.to_vec(), write_position)
+            .write_at(bytes.clone().into(), write_position)
             .await
-            .map_err(BufferedFileError::InnerError)?
+            .map_err(|err| UnwrittenError {
+                unwritten: bytes.clone(),
+                err: BufferedFileError::InnerError(err),
+            })?
             .try_into()
-            .map_err(|_| BufferedFileError::IntegerConversionError)?;
+            .map_err(|_| UnwrittenError {
+                unwritten: bytes,
+                err: BufferedFileError::IntegerConversionError,
+            })?;
 
         self.size += write_len;
 
@@ -86,10 +94,7 @@ impl AsyncRead<OwnedByteLender<ReadResult>> for BufferedFile {
         position: Self::Position,
         size: Self::Size,
     ) -> Result<
-        crate::ReadBytes<
-            <OwnedByteLender<ReadResult> as crate::ByteLender>::ByteBuf<'a>,
-            Self::Size,
-        >,
+        ReadBytes<<OwnedByteLender<ReadResult> as ByteLender>::ByteBuf<'a>, Self::Size>,
         Self::Error,
     >
     where

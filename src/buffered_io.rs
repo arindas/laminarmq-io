@@ -294,7 +294,7 @@ where
             err: Self::Error::BufferError(err),
         })?;
 
-        let bytes_len = R::Size::from_usize(bytes.len()).ok_or(UnwrittenError {
+        let bytes_len = R::Size::from_usize(bytes.len()).ok_or_else(|| UnwrittenError {
             unwritten: bytes.clone(),
             err: Self::Error::IntegerConversionError,
         })?;

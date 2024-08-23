@@ -139,7 +139,7 @@ where
             match match match (buf, append_threshold) {
                 (Ok(buf), Some(thresh))
                     if (bytes_written
-                        + A::Size::from_usize(buf.len()).ok_or(UnwrittenError {
+                        + A::Size::from_usize(buf.len()).ok_or_else(|| UnwrittenError {
                             err: StreamAppendError::InnerError(IntegerConversionError.into()),
                             unwritten: buf.clone(),
                         })?)
