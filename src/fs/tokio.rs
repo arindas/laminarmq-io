@@ -1,15 +1,17 @@
+use bytes::{Bytes, BytesMut};
 use num::ToPrimitive;
 use std::os::unix::fs::FileExt;
 use std::path::Path;
 use std::{io, marker::PhantomData, path::PathBuf};
+use tokio::task::JoinError;
 use tokio::{
     fs::{File, OpenOptions},
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
 };
 
-use crate::{
-    AppendLocation, AsyncAppend, AsyncBufRead, AsyncClose, AsyncRemove, AsyncTruncate,
-    FallibleEntity, IntegerConversionError, ReadBytesLen, SizedEntity,
+use crate::io_types::{
+    AppendLocation, AsyncAppend, AsyncBufRead, AsyncClose, AsyncFlush, AsyncRemove, AsyncTruncate,
+    FallibleEntity, IntegerConversionError, ReadBytes, SizedEntity, UnreadError, UnwrittenError,
 };
 
 pub struct RandomRead;
@@ -65,6 +67,7 @@ impl<K, const FA: bool> SizedEntity for TokioFile<K, FA> {
 
 pub enum TokioFileError {
     IoError(io::Error),
+    JoinError(JoinError),
 
     IntoStdFileConversionFailed,
 
@@ -99,20 +102,29 @@ impl<K, const FA: bool> AsyncTruncate for TokioFile<K, FA> {
 impl<K, const FLUSH_ON_APPEND: bool> AsyncAppend for TokioFile<K, FLUSH_ON_APPEND> {
     async fn append(
         &mut self,
-        bytes: &[u8],
-    ) -> Result<AppendLocation<Self::Position, Self::Size>, Self::Error> {
+        bytes: Bytes,
+    ) -> Result<AppendLocation<Self::Position, Self::Size>, UnwrittenError<Self::Error>> {
         let write_position = self.size();
 
         let write_len = self
             .inner
-            .write(bytes)
+            .write(&bytes)
             .await
-            .map_err(Self::Error::IoError)?
+            .map_err(|err| UnwrittenError {
+                unwritten: bytes.clone(),
+                err: TokioFileError::IoError(err),
+            })?
             .to_u64()
-            .ok_or(Self::Error::IntegerConversionError)?;
+            .ok_or_else(|| UnwrittenError {
+                unwritten: bytes.clone(),
+                err: Self::Error::IntegerConversionError,
+            })?;
 
         if FLUSH_ON_APPEND {
-            self.inner.flush().await.map_err(Self::Error::IoError)?;
+            self.inner.flush().await.map_err(|err| UnwrittenError {
+                unwritten: bytes.clone(),
+                err: TokioFileError::IoError(err),
+            })?;
         }
 
         self.size += write_len;
@@ -128,27 +140,42 @@ impl AsyncBufRead for TokioFile<Seek, true> {
     async fn read_at_buf(
         &mut self,
         position: Self::Position,
-        buffer: &mut [u8],
-    ) -> Result<ReadBytesLen<Self::Size>, Self::Error> {
+        mut buffer: BytesMut,
+    ) -> Result<ReadBytes<BytesMut, Self::Size>, UnreadError<Self::Error>> {
         self.inner
             .seek(io::SeekFrom::Start(position))
             .await
-            .map_err(Self::Error::IoError)?;
+            .map_err(|err| UnreadError {
+                unread: buffer.clone(),
+                err: Self::Error::IoError(err),
+            })?;
 
         let read_len = self
             .inner
-            .read(buffer)
+            .read(&mut buffer)
             .await
-            .map_err(Self::Error::IoError)?
+            .map_err(|err| UnreadError {
+                unread: buffer.clone(),
+                err: Self::Error::IoError(err),
+            })?
             .to_u64()
-            .ok_or(Self::Error::IntegerConversionError)?;
+            .ok_or_else(|| UnreadError {
+                unread: buffer.clone(),
+                err: Self::Error::IntegerConversionError,
+            })?;
 
         self.inner
             .seek(io::SeekFrom::Start(self.size))
             .await
-            .map_err(Self::Error::IoError)?;
+            .map_err(|err| UnreadError {
+                unread: buffer.clone(),
+                err: Self::Error::IoError(err),
+            })?;
 
-        Ok(ReadBytesLen { read_len })
+        Ok(ReadBytes {
+            read_bytes: buffer,
+            read_len,
+        })
     }
 }
 
@@ -157,30 +184,61 @@ impl AsyncBufRead for TokioFile<RandomRead, true> {
     async fn read_at_buf(
         &mut self,
         position: Self::Position,
-        buffer: &mut [u8],
-    ) -> Result<ReadBytesLen<Self::Size>, Self::Error> {
+        buffer: BytesMut,
+    ) -> Result<ReadBytes<BytesMut, Self::Size>, UnreadError<Self::Error>> {
         let reader = self
             .inner
             .try_clone()
             .await
-            .map_err(Self::Error::IoError)?
+            .map_err(|err| UnreadError {
+                unread: buffer.clone(),
+                err: Self::Error::IoError(err),
+            })?
             .try_into_std()
-            .map_err(|_| Self::Error::IntoStdFileConversionFailed)?;
+            .map_err(|_| UnreadError {
+                unread: buffer.clone(),
+                err: Self::Error::IntoStdFileConversionFailed,
+            })?;
 
-        let mut read_buffer = vec![0_u8; buffer.len()];
+        let read_len_usize = buffer.len();
+
+        let read_len = read_len_usize.to_u64().ok_or_else(|| UnreadError {
+            unread: buffer.clone(),
+            err: Self::Error::IntegerConversionError,
+        })?;
+
+        let mut read_buffer = buffer;
 
         let read_buffer = tokio::task::spawn_blocking(move || {
-            reader
-                .read_exact_at(&mut read_buffer, position)
-                .map(|_| read_buffer)
+            let x = reader.read_exact_at(&mut read_buffer, position);
+
+            match x {
+                Ok(_) => Ok(read_buffer),
+                Err(err) => Err((err, read_buffer)),
+            }
         })
-        .await
-        .unwrap()
-        .unwrap();
+        .await;
 
-        buffer.copy_from_slice(&read_buffer);
+        match read_buffer {
+            Ok(Ok(read_buffer)) => Ok(ReadBytes {
+                read_bytes: read_buffer,
+                read_len,
+            }),
+            Ok(Err((err, unread))) => Err(UnreadError {
+                unread,
+                err: Self::Error::IoError(err),
+            }),
+            Err(err) => Err(UnreadError {
+                unread: Bytes::from(vec![0u8; read_len_usize]).into(),
+                err: Self::Error::JoinError(err),
+            }),
+        }
+    }
+}
 
-        Ok(ReadBytesLen { read_len: 0 })
+impl<K, const FA: bool> AsyncFlush for TokioFile<K, FA> {
+    async fn flush(&mut self) -> Result<(), Self::Error> {
+        self.inner.flush().await.map_err(Self::Error::IoError)
     }
 }
 
@@ -194,7 +252,7 @@ impl<K, const FA: bool> AsyncRemove for TokioFile<K, FA> {
 
 impl<K, const FA: bool> AsyncClose for TokioFile<K, FA> {
     async fn close(mut self) -> Result<(), Self::Error> {
-        self.inner.flush().await.map_err(Self::Error::IoError)?;
+        self.flush().await?;
 
         drop(self.inner);
 
