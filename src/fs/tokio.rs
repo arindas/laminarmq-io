@@ -11,8 +11,7 @@ use tokio::{
 
 use crate::io_types::{
     AppendLocation, AsyncAppend, AsyncBufRead, AsyncClose, AsyncRemove, AsyncTruncate,
-    FallibleEntity, IntegerConversionError, ReadBytes, ReadBytesLen, SizedEntity, UnreadError,
-    UnwrittenError,
+    FallibleEntity, IntegerConversionError, ReadBytes, SizedEntity, UnreadError, UnwrittenError,
 };
 
 pub struct RandomRead;
