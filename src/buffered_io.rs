@@ -941,3 +941,47 @@ where
         }
     }
 }
+
+impl<R> AsyncTruncate for BufferedReader<R, R::Position, R::Size>
+where
+    R: AsyncTruncate,
+{
+    async fn truncate(&mut self, position: Self::Position) -> Result<(), Self::Error> {
+        self.inner
+            .truncate(position)
+            .await
+            .map_err(Self::Error::InnerError)?;
+
+        match position {
+            pos if pos < self.buffer.anchor_position() => {
+                self.buffer.re_anchor(zero());
+            }
+            pos if self.buffer.contains_position(pos) => {
+                self.buffer
+                    .truncate(pos)
+                    .map_err(Self::Error::BufferError)?;
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+}
+
+impl<R, P, S> AsyncRemove for BufferedReader<R, P, S>
+where
+    R: AsyncRemove,
+{
+    async fn remove(self) -> Result<(), Self::Error> {
+        self.inner.remove().await.map_err(Self::Error::InnerError)
+    }
+}
+
+impl<R, P, S> AsyncClose for BufferedReader<R, P, S>
+where
+    R: AsyncClose,
+{
+    async fn close(self) -> Result<(), Self::Error> {
+        self.inner.close().await.map_err(Self::Error::InnerError)
+    }
+}
