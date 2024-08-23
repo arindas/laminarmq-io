@@ -863,11 +863,81 @@ where
                 None => (None, BufferedReaderStreamReadState::Done),
             },
 
-            _ => todo!(),
+            BufferedReaderStreamReadState::ReanchorBuffer {
+                anchor_position,
+                remainder,
+            } => {
+                self.buffer.re_anchor(anchor_position);
+
+                (
+                    Some(Ok(BufferedReadByteBuf::Buffered(Bytes::new()))),
+                    BufferedReaderStreamReadState::FillBuffer {
+                        inner_read_position: anchor_position,
+                        remainder,
+                    },
+                )
+            }
+
+            BufferedReaderStreamReadState::Done => (None, BufferedReaderStreamReadState::Done),
         };
 
         self.state = next_state;
 
         item
+    }
+}
+
+impl<R, RBL> StreamRead<BufferedByteLender<RBL>> for BufferedReader<R, R::Position, R::Size>
+where
+    R: StreamRead<RBL>,
+    R::Error: 'static,
+    RBL: ByteLender + 'static,
+{
+    fn read_stream_at<'a>(
+        &'a mut self,
+        position: Self::Position,
+        size: Self::Size,
+    ) -> impl Stream<FallibleByteLender<BufferedByteLender<RBL>, Self::Error>> + 'a
+    where
+        BufferedByteLender<RBL>: 'a,
+    {
+        let inner_size = self.inner.size();
+
+        let (initial_state, inner_read_pos, inner_read_size) = match position {
+            pos if self.buffer.contains_position(pos) => {
+                let avail_to_read_from_pos = self.buffer.avail_to_read_from_pos(position);
+                let avail_to_read_from_pos =
+                    R::Size::from_usize(avail_to_read_from_pos).unwrap_or(zero());
+
+                let remainder = size.checked_sub(&avail_to_read_from_pos).unwrap_or(zero());
+
+                (
+                    BufferedReaderStreamReadState::ConsumeBuffer {
+                        buffer_read_position: position,
+                        buffer_read_size: avail_to_read_from_pos,
+                        remainder,
+                    },
+                    position + avail_to_read_from_pos.into(),
+                    remainder,
+                )
+            }
+
+            pos => (
+                BufferedReaderStreamReadState::FillBuffer {
+                    inner_read_position: pos,
+                    remainder: size,
+                },
+                pos,
+                size,
+            ),
+        };
+
+        BufferedReaderStreamReadStream {
+            state: initial_state,
+            inner_stream_read_stream: self.inner.read_stream_at(inner_read_pos, inner_read_size),
+            buffer: &mut self.buffer,
+            inner_size,
+            _phantom_data: PhantomData::<R>,
+        }
     }
 }
