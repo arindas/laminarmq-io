@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/buffered_io.rs`."><title>buffered_io.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../static.files/rustdoc-dd39b87e5fcfba68.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="laminarmq_io" data-themes="" data-resource-suffix="" data-rustdoc-version="1.80.1 (3f5fd8dd4 2024-08-06)" data-channel="1.80.1" data-search-js="search-d52510db62a78183.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../static.files/storage-118b08c4c78b968e.js"></script><script defer src="../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-20a3ad099b048cf2.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-df360f571f6edeae.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/buffered_io.rs`."><title>buffered_io.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../static.files/rustdoc-c5d6553a23f1e5a6.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="laminarmq_io" data-themes="" data-resource-suffix="" data-rustdoc-version="1.81.0 (eeb90cda1 2024-09-04)" data-channel="1.81.0" data-search-js="search-d234aafac6c221dd.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../static.files/storage-118b08c4c78b968e.js"></script><script defer src="../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-d2fab2bf619172d3.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-df360f571f6edeae.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
 <a href="#4" id="4">4</a>
@@ -994,7 +994,6 @@
 <a href="#994" id="994">994</a>
 <a href="#995" id="995">995</a>
 <a href="#996" id="996">996</a>
-<a href="#997" id="997">997</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     cmp::{max, min},
     marker::PhantomData,
@@ -1007,9 +1006,10 @@
 <span class="kw">use crate</span>::{
     anchored_buffer::{AnchoredBuffer, BufferError},
     io_types::{
-        AppendLocation, AsyncAppend, AsyncBufRead, AsyncClose, AsyncFlush, AsyncRead, AsyncRemove,
-        AsyncTruncate, ByteLender, FallibleByteLender, FallibleEntity, IntegerConversionError,
-        OwnedByteLender, ReadBytes, SizedEntity, StreamRead, UnreadError, UnwrittenError,
+        AppendInfo, AppendLocation, AsyncAppend, AsyncBufRead, AsyncClose, AsyncFlush, AsyncRead,
+        AsyncRemove, AsyncTruncate, ByteLender, FallibleByteLender, FallibleEntity,
+        IntegerConversionError, OwnedByteLender, ReadBytes, SizedEntity, StreamRead, UnreadError,
+        UnwrittenError,
     },
     stream::{<span class="self">self</span>, Lender, Stream},
 };
@@ -1229,9 +1229,13 @@
         <span class="kw">let </span>inner_append_result = <span class="self">self</span>.inner.append(bytes).<span class="kw">await</span>;
 
         <span class="kw">match </span>inner_append_result {
-            <span class="prelude-val">Ok</span>(AppendLocation {
-                write_position,
-                write_len,
+            <span class="prelude-val">Ok</span>(AppendInfo {
+                bytes: <span class="kw">_</span>,
+                location:
+                    AppendLocation {
+                        write_position,
+                        write_len,
+                    },
             }) <span class="kw">if </span>write_len
                 .to_usize()
                 .ok_or(<span class="self">Self</span>::Error::IntegerConversionError)<span class="question-mark">?
@@ -1245,9 +1249,13 @@
                 <span class="prelude-val">Ok</span>(())
             }
 
-            <span class="prelude-val">Ok</span>(AppendLocation {
-                write_position,
-                write_len,
+            <span class="prelude-val">Ok</span>(AppendInfo {
+                bytes: <span class="kw">_</span>,
+                location:
+                    AppendLocation {
+                        write_position,
+                        write_len,
+                    },
             }) =&gt; {
                 <span class="self">self</span>.flush_state = FlushState::Incomplete {
                     retry_flush_buffer_offset: <span class="self">self
@@ -1273,7 +1281,7 @@
     <span class="kw">async fn </span>append(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         bytes: Bytes,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;AppendLocation&lt;<span class="self">Self</span>::Position, <span class="self">Self</span>::Size&gt;, UnwrittenError&lt;<span class="self">Self</span>::Error&gt;&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;AppendInfo&lt;<span class="self">Self</span>::Position, <span class="self">Self</span>::Size&gt;, UnwrittenError&lt;<span class="self">Self</span>::Error&gt;&gt; {
         <span class="kw">enum </span>AppendDest {
             Buffer,
             Inner,
@@ -1334,9 +1342,12 @@
 
                 (
                     <span class="prelude-val">None</span>,
-                    <span class="prelude-val">Ok</span>(AppendLocation {
-                        write_position: buffer_end_position,
-                        write_len: bytes_len,
+                    <span class="prelude-val">Ok</span>(AppendInfo {
+                        bytes,
+                        location: AppendLocation {
+                            write_position: buffer_end_position,
+                            write_len: bytes_len,
+                        },
                     }),
                 )
             }
@@ -1352,28 +1363,15 @@
             ),
             (<span class="kw">_</span>, <span class="prelude-val">Err</span>(err)) =&gt; (<span class="prelude-val">None</span>, <span class="prelude-val">Err</span>(err)),
         } {
-            (
-                <span class="prelude-val">Some</span>(ReanchorBufferAfterFlushAndInnerAppend),
-                <span class="prelude-val">Ok</span>(
-                    append_location @ AppendLocation {
-                        write_position,
-                        write_len,
-                    },
-                ),
-            ) =&gt; {
-                <span class="self">self</span>.buffer.re_anchor(write_position + write_len.into());
-                <span class="prelude-val">Ok</span>(append_location)
+            (<span class="prelude-val">Some</span>(ReanchorBufferAfterFlushAndInnerAppend), <span class="prelude-val">Ok</span>(append_info)) =&gt; {
+                <span class="self">self</span>.buffer.re_anchor(append_info.location.end_position());
+                <span class="prelude-val">Ok</span>(append_info)
             }
             (<span class="kw">_</span>, result) =&gt; result,
         } {
-            <span class="prelude-val">Ok</span>(
-                append_location @ AppendLocation {
-                    write_position: <span class="kw">_</span>,
-                    write_len,
-                },
-            ) =&gt; {
-                <span class="self">self</span>.size += write_len;
-                <span class="prelude-val">Ok</span>(append_location)
+            <span class="prelude-val">Ok</span>(append_info) =&gt; {
+                <span class="self">self</span>.size += append_info.location.write_len;
+                <span class="prelude-val">Ok</span>(append_info)
             }
             <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err),
         }
