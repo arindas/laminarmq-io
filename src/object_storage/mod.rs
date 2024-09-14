@@ -1,6 +1,7 @@
 use core::cmp::Ordering;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "aws_s3")]
 pub mod aws_s3;
 
 pub trait PartMap {

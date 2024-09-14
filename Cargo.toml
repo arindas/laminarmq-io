@@ -10,11 +10,21 @@ zerovec = "0.10.4"
 zerovec-derive = "0.10.3"
 futures = "0.3.30"
 num = "0.4.2"
-tokio = { version = "1.37", features=["fs", "rt", "rt-multi-thread", "io-util", "sync"] }
-aws-config = { version = "1.1.7", features = ["behavior-version-latest"] }
-aws-sdk-s3 = "1.41.0"
+tokio = { version = "1.37", features=["fs", "rt", "rt-multi-thread", "io-util", "sync"], optional = true }
+aws-config = { version = "1.1.7", features = ["behavior-version-latest"], optional = true }
+aws-sdk-s3 = { version = "1.41.0", optional = true }
 bytes = "1.7.1"
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
-glommio = "0.9.0"
-tokio-uring = { version = "0.5.0", features = ["bytes"] }
+glommio = { version = "0.9.0", optional = true }
+tokio-uring = { version = "0.5.0", features = ["bytes"], optional = true }
+
+[features]
+default = ["fs", "object_storage"]
+fs = ["tokio", "tokio_uring", "glommio"]
+object_storage = ["aws_s3"]
+tokio = ["dep:tokio"]
+tokio_uring = ["dep:tokio-uring"]
+glommio = ["dep:glommio"]
+aws_s3 = ["dep:aws-config", "dep:aws-sdk-s3"]
+legacy = []
