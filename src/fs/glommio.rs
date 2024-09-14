@@ -5,9 +5,9 @@ use glommio::{
 };
 
 use crate::io_types::{
-    AppendLocation, AsyncAppend, AsyncClose, AsyncFlush, AsyncRead, AsyncRemove, AsyncTruncate,
-    ByteLender, FallibleEntity, IntegerConversionError, OwnedByteLender, ReadBytes, SizedEntity,
-    UnwrittenError,
+    AppendInfo, AppendLocation, AsyncAppend, AsyncClose, AsyncFlush, AsyncRead, AsyncRemove,
+    AsyncTruncate, ByteLender, FallibleEntity, IntegerConversionError, OwnedByteLender, ReadBytes,
+    SizedEntity, UnwrittenError,
 };
 
 pub enum BufferedFileError {
@@ -62,7 +62,7 @@ impl AsyncAppend for BufferedFile {
     async fn append(
         &mut self,
         bytes: Bytes,
-    ) -> Result<AppendLocation<Self::Position, Self::Size>, UnwrittenError<Self::Error>> {
+    ) -> Result<AppendInfo<Self::Position, Self::Size>, UnwrittenError<Self::Error>> {
         let write_position: Self::Position = self.size;
 
         let write_len: Self::Size = self
@@ -75,15 +75,18 @@ impl AsyncAppend for BufferedFile {
             })?
             .try_into()
             .map_err(|_| UnwrittenError {
-                unwritten: bytes,
+                unwritten: bytes.clone(),
                 err: BufferedFileError::IntegerConversionError,
             })?;
 
         self.size += write_len;
 
-        Ok(AppendLocation {
-            write_position,
-            write_len,
+        Ok(AppendInfo {
+            bytes,
+            location: AppendLocation {
+                write_position,
+                write_len,
+            },
         })
     }
 }
@@ -194,7 +197,7 @@ impl AsyncAppend for DmaFile {
     async fn append(
         &mut self,
         bytes: Bytes,
-    ) -> Result<AppendLocation<Self::Position, Self::Size>, UnwrittenError<Self::Error>> {
+    ) -> Result<AppendInfo<Self::Position, Self::Size>, UnwrittenError<Self::Error>> {
         let write_position: Self::Position = self.size;
 
         let mut buffer = self.inner.alloc_dma_buffer(bytes.len());
@@ -210,15 +213,18 @@ impl AsyncAppend for DmaFile {
             })?
             .try_into()
             .map_err(|_| UnwrittenError {
-                unwritten: bytes,
+                unwritten: bytes.clone(),
                 err: DmaFileError::IntegerConversionError,
             })?;
 
         self.size += write_len;
 
-        Ok(AppendLocation {
-            write_position,
-            write_len,
+        Ok(AppendInfo {
+            bytes,
+            location: AppendLocation {
+                write_position,
+                write_len,
+            },
         })
     }
 }

@@ -10,9 +10,10 @@ use num::{zero, CheckedSub, FromPrimitive, ToPrimitive};
 use crate::{
     anchored_buffer::{AnchoredBuffer, BufferError},
     io_types::{
-        AppendLocation, AsyncAppend, AsyncBufRead, AsyncClose, AsyncFlush, AsyncRead, AsyncRemove,
-        AsyncTruncate, ByteLender, FallibleByteLender, FallibleEntity, IntegerConversionError,
-        OwnedByteLender, ReadBytes, SizedEntity, StreamRead, UnreadError, UnwrittenError,
+        AppendInfo, AppendLocation, AsyncAppend, AsyncBufRead, AsyncClose, AsyncFlush, AsyncRead,
+        AsyncRemove, AsyncTruncate, ByteLender, FallibleByteLender, FallibleEntity,
+        IntegerConversionError, OwnedByteLender, ReadBytes, SizedEntity, StreamRead, UnreadError,
+        UnwrittenError,
     },
     stream::{self, Lender, Stream},
 };
@@ -232,9 +233,13 @@ where
         let inner_append_result = self.inner.append(bytes).await;
 
         match inner_append_result {
-            Ok(AppendLocation {
-                write_position,
-                write_len,
+            Ok(AppendInfo {
+                bytes: _,
+                location:
+                    AppendLocation {
+                        write_position,
+                        write_len,
+                    },
             }) if write_len
                 .to_usize()
                 .ok_or(Self::Error::IntegerConversionError)?
@@ -248,9 +253,13 @@ where
                 Ok(())
             }
 
-            Ok(AppendLocation {
-                write_position,
-                write_len,
+            Ok(AppendInfo {
+                bytes: _,
+                location:
+                    AppendLocation {
+                        write_position,
+                        write_len,
+                    },
             }) => {
                 self.flush_state = FlushState::Incomplete {
                     retry_flush_buffer_offset: self
@@ -276,7 +285,7 @@ where
     async fn append(
         &mut self,
         bytes: Bytes,
-    ) -> Result<AppendLocation<Self::Position, Self::Size>, UnwrittenError<Self::Error>> {
+    ) -> Result<AppendInfo<Self::Position, Self::Size>, UnwrittenError<Self::Error>> {
         enum AppendDest {
             Buffer,
             Inner,
@@ -337,9 +346,12 @@ where
 
                 (
                     None,
-                    Ok(AppendLocation {
-                        write_position: buffer_end_position,
-                        write_len: bytes_len,
+                    Ok(AppendInfo {
+                        bytes,
+                        location: AppendLocation {
+                            write_position: buffer_end_position,
+                            write_len: bytes_len,
+                        },
                     }),
                 )
             }
@@ -355,28 +367,15 @@ where
             ),
             (_, Err(err)) => (None, Err(err)),
         } {
-            (
-                Some(ReanchorBufferAfterFlushAndInnerAppend),
-                Ok(
-                    append_location @ AppendLocation {
-                        write_position,
-                        write_len,
-                    },
-                ),
-            ) => {
-                self.buffer.re_anchor(write_position + write_len.into());
-                Ok(append_location)
+            (Some(ReanchorBufferAfterFlushAndInnerAppend), Ok(append_info)) => {
+                self.buffer.re_anchor(append_info.location.end_position());
+                Ok(append_info)
             }
             (_, result) => result,
         } {
-            Ok(
-                append_location @ AppendLocation {
-                    write_position: _,
-                    write_len,
-                },
-            ) => {
-                self.size += write_len;
-                Ok(append_location)
+            Ok(append_info) => {
+                self.size += append_info.location.write_len;
+                Ok(append_info)
             }
             Err(err) => Err(err),
         }

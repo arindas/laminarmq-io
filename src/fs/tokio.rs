@@ -10,9 +10,10 @@ use tokio::{
 };
 
 use crate::io_types::{
-    AppendLocation, AsyncAppend, AsyncBufRead, AsyncClose, AsyncFlush, AsyncRemove, AsyncTruncate,
+    AppendInfo, AsyncAppend, AsyncBufRead, AsyncClose, AsyncFlush, AsyncRemove, AsyncTruncate,
     FallibleEntity, IntegerConversionError, ReadBytes, SizedEntity, UnreadError, UnwrittenError,
 };
+use crate::AppendLocation;
 
 pub struct RandomRead;
 
@@ -103,7 +104,7 @@ impl<K, const FLUSH_ON_APPEND: bool> AsyncAppend for TokioFile<K, FLUSH_ON_APPEN
     async fn append(
         &mut self,
         bytes: Bytes,
-    ) -> Result<AppendLocation<Self::Position, Self::Size>, UnwrittenError<Self::Error>> {
+    ) -> Result<AppendInfo<Self::Position, Self::Size>, UnwrittenError<Self::Error>> {
         let write_position = self.size();
 
         let write_len = self
@@ -129,9 +130,12 @@ impl<K, const FLUSH_ON_APPEND: bool> AsyncAppend for TokioFile<K, FLUSH_ON_APPEN
 
         self.size += write_len;
 
-        Ok(AppendLocation {
-            write_position,
-            write_len,
+        Ok(AppendInfo {
+            bytes,
+            location: AppendLocation {
+                write_position,
+                write_len,
+            },
         })
     }
 }
