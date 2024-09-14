@@ -15,13 +15,19 @@
 <a href="#15" id="15">15</a>
 <a href="#16" id="16">16</a>
 <a href="#17" id="17">17</a>
+<a href="#18" id="18">18</a>
+<a href="#19" id="19">19</a>
+<a href="#20" id="20">20</a>
 </pre></div><pre class="rust"><code><span class="attr">#![doc = <span class="macro">include_str!</span>(<span class="string">"../README.md"</span>)]
 
 </span><span class="kw">pub mod </span>anchored_buffer;
 <span class="kw">pub mod </span>buffered_io;
 <span class="kw">pub mod </span>fs;
 <span class="kw">pub mod </span>io_types;
-<span class="kw">pub mod </span>legacy;
+
+<span class="attr">#[cfg(feature = <span class="string">"legacy"</span>)]
+</span><span class="kw">pub mod </span>legacy;
+
 <span class="kw">pub mod </span>object_storage;
 <span class="kw">pub mod </span>stream;
 

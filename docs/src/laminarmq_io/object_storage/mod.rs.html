@@ -154,10 +154,12 @@
 <a href="#154" id="154">154</a>
 <a href="#155" id="155">155</a>
 <a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>core::cmp::Ordering;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
-<span class="kw">pub mod </span>aws_s3;
+<span class="attr">#[cfg(feature = <span class="string">"aws_s3"</span>)]
+</span><span class="kw">pub mod </span>aws_s3;
 
 <span class="kw">pub trait </span>PartMap {
     <span class="kw">fn </span>position_part_containing_offset(<span class="kw-2">&amp;</span><span class="self">self</span>, offset: usize) -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt;;

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["anchored_buffer","buffered_io","fs","io_types","legacy","object_storage","prelude","stream"]};
+window.SIDEBAR_ITEMS = {"mod":["anchored_buffer","buffered_io","fs","io_types","object_storage","prelude","stream"]};
