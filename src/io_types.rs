@@ -86,6 +86,23 @@ pub struct AppendLocation<P, S> {
     pub write_len: S,
 }
 
+impl<P, S> AppendLocation<P, S>
+where
+    P: Quantifier,
+    S: Quantifier + Into<P>,
+{
+    #[inline]
+    pub fn end_position(&self) -> P {
+        self.write_position + self.write_len.into()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct AppendInfo<P, S> {
+    pub location: AppendLocation<P, S>,
+    pub bytes: Bytes,
+}
+
 pub struct UnwrittenError<E> {
     pub unwritten: Bytes,
     pub err: E,
@@ -95,9 +112,7 @@ pub trait AsyncAppend: SizedEntity + FallibleEntity {
     fn append(
         &mut self,
         bytes: Bytes,
-    ) -> impl Future<
-        Output = Result<AppendLocation<Self::Position, Self::Size>, UnwrittenError<Self::Error>>,
-    >;
+    ) -> impl Future<Output = Result<AppendInfo<Self::Position, Self::Size>, UnwrittenError<Self::Error>>>;
 }
 
 pub enum StreamAppendError<E, XE> {
@@ -110,8 +125,7 @@ pub trait StreamAppend: SizedEntity + FallibleEntity {
     fn append_stream<XE, X>(
         &mut self,
         stream: &mut X,
-        append_threshold: Option<Self::Size>,
-        rollback: bool,
+        opts: StreamAppendOpts<Self::Size>,
     ) -> impl Future<Output = StreamAppendResult<Self::Position, Self::Size, Self::Error, XE>>
     where
         X: Stream<OwnedLender<Result<Bytes, XE>>>,
@@ -121,6 +135,12 @@ pub trait StreamAppend: SizedEntity + FallibleEntity {
 pub type StreamAppendResult<P, S, E, XE> =
     Result<AppendLocation<P, S>, UnwrittenError<StreamAppendError<E, XE>>>;
 
+#[derive(Clone, Copy, Debug)]
+pub struct StreamAppendOpts<S> {
+    pub append_threshold: Option<S>,
+    pub rollback: bool,
+}
+
 impl<A> StreamAppend for A
 where
     A: AsyncAppend + AsyncTruncate,
@@ -128,21 +148,22 @@ where
     async fn append_stream<XE, X>(
         &mut self,
         stream: &mut X,
-        append_threshold: Option<Self::Size>,
-        rollback: bool,
+        opts: StreamAppendOpts<Self::Size>,
     ) -> StreamAppendResult<Self::Position, Self::Size, Self::Error, XE>
     where
         X: Stream<OwnedLender<Result<Bytes, XE>>> + Unpin,
     {
-        let (mut bytes_written, write_position) = (zero(), self.size().into());
+        let (mut bytes_written, write_position) = (zero::<Self::Size>(), self.size().into());
+
+        let append_threshold = opts.append_threshold.and_then(|x| x.to_usize());
+
         while let Some(buf) = stream.next().await {
             match match match (buf, append_threshold) {
                 (Ok(buf), Some(thresh))
-                    if (bytes_written
-                        + A::Size::from_usize(buf.len()).ok_or_else(|| UnwrittenError {
-                            err: StreamAppendError::InnerError(IntegerConversionError.into()),
-                            unwritten: buf.clone(),
-                        })?)
+                    if bytes_written.to_usize().ok_or_else(|| UnwrittenError {
+                        err: StreamAppendError::InnerError(IntegerConversionError.into()),
+                        unwritten: buf.clone(),
+                    })? + buf.len()
                         <= thresh =>
                 {
                     Ok(buf)
@@ -166,12 +187,16 @@ where
                     }),
                 Err(error) => Err(error),
             } {
-                Ok(AppendLocation {
-                    write_position: _,
-                    write_len,
+                Ok(AppendInfo {
+                    bytes: _,
+                    location:
+                        AppendLocation {
+                            write_position: _,
+                            write_len,
+                        },
                 }) => bytes_written += write_len,
 
-                Err(UnwrittenError { unwritten, err }) if rollback => {
+                Err(UnwrittenError { unwritten, err }) if opts.rollback => {
                     self.truncate(write_position)
                         .await
                         .map_err(|err| UnwrittenError {

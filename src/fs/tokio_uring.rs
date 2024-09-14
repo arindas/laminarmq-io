@@ -3,9 +3,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::io_types::{
-    AppendLocation, AsyncAppend, AsyncBufRead, AsyncClose, AsyncFlush, AsyncRemove, FallibleEntity,
-    IntegerConversionError, ReadBytes, SizedEntity, UnreadError, UnwrittenError,
+use crate::{
+    io_types::{
+        AppendInfo, AsyncAppend, AsyncBufRead, AsyncClose, AsyncFlush, AsyncRemove, FallibleEntity,
+        IntegerConversionError, ReadBytes, SizedEntity, UnreadError, UnwrittenError,
+    },
+    AppendLocation,
 };
 
 use bytes::{Bytes, BytesMut};
@@ -74,7 +77,7 @@ impl AsyncAppend for TokioUringFile {
     async fn append(
         &mut self,
         bytes: Bytes,
-    ) -> Result<AppendLocation<Self::Position, Self::Size>, UnwrittenError<Self::Error>> {
+    ) -> Result<AppendInfo<Self::Position, Self::Size>, UnwrittenError<Self::Error>> {
         let write_position = self.size;
 
         let (result, bytes) = self.inner.write_at(bytes, write_position).submit().await;
@@ -82,9 +85,12 @@ impl AsyncAppend for TokioUringFile {
         match result {
             Ok(write_len) => {
                 self.size += write_len as u64;
-                Ok(AppendLocation {
-                    write_position,
-                    write_len: write_len as u64,
+                Ok(AppendInfo {
+                    bytes,
+                    location: AppendLocation {
+                        write_position,
+                        write_len: write_len as u64,
+                    },
                 })
             }
             Err(err) => Err(UnwrittenError {
