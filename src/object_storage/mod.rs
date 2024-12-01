@@ -4,17 +4,17 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "aws_s3")]
 pub mod aws_s3;
 
-pub trait PartMap {
-    fn position_part_containing_offset(&self, offset: usize) -> Option<usize>;
+pub trait BlockMap {
+    fn position_block_containing_offset(&self, offset: usize) -> Option<usize>;
 
-    fn get_part_at_idx(&self, part_idx: usize) -> Option<Part>;
+    fn get_block_at_idx(&self, block_idx: usize) -> Option<Block>;
 
-    fn get_part_containing_offset(&self, offset: usize) -> Option<Part> {
-        self.position_part_containing_offset(offset)
-            .and_then(|idx| self.get_part_at_idx(idx))
+    fn get_block_containing_offset(&self, offset: usize) -> Option<Block> {
+        self.position_block_containing_offset(offset)
+            .and_then(|idx| self.get_block_at_idx(idx))
     }
 
-    fn append_part_with_part_size(&mut self, part_size: usize) -> Part;
+    fn append_block_with_block_size(&mut self, block_size: usize) -> Block;
 
     fn len(&self) -> usize;
 
@@ -22,10 +22,10 @@ pub trait PartMap {
         self.len() == 0
     }
 
-    fn truncate(&mut self, offset: usize) -> Option<(usize, usize, Part)>;
+    fn truncate(&mut self, offset: usize) -> Option<(usize, usize, Block)>;
 
     fn size(&self) -> usize {
-        self.get_part_at_idx(self.len() - 1)
+        self.get_block_at_idx(self.len() - 1)
             .map(|p| p.end())
             .unwrap_or(0)
     }
@@ -34,21 +34,21 @@ pub trait PartMap {
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
-pub struct Part {
+pub struct Block {
     pub offset: usize,
     pub size: usize,
 }
 
-impl Part {
+impl Block {
     pub fn end(&self) -> usize {
         self.offset + self.size
     }
 }
 
-impl PartMap for Vec<Part> {
-    fn position_part_containing_offset(&self, offset: usize) -> Option<usize> {
-        self.binary_search_by(|part| match part.offset.cmp(&offset) {
-            Ordering::Less if offset < part.end() => Ordering::Equal,
+impl BlockMap for Vec<Block> {
+    fn position_block_containing_offset(&self, offset: usize) -> Option<usize> {
+        self.binary_search_by(|block| match block.offset.cmp(&offset) {
+            Ordering::Less if offset < block.end() => Ordering::Equal,
             Ordering::Less => Ordering::Less,
             Ordering::Equal => Ordering::Equal,
             Ordering::Greater => Ordering::Greater,
@@ -56,41 +56,41 @@ impl PartMap for Vec<Part> {
         .ok()
     }
 
-    fn get_part_at_idx(&self, part_idx: usize) -> Option<Part> {
-        self.get(part_idx).cloned()
+    fn get_block_at_idx(&self, block_idx: usize) -> Option<Block> {
+        self.get(block_idx).cloned()
     }
 
-    fn append_part_with_part_size(&mut self, part_size: usize) -> Part {
+    fn append_block_with_block_size(&mut self, block_size: usize) -> Block {
         let offset = self.last().map_or(0, |x| x.end());
 
-        let part = Part {
+        let block = Block {
             offset,
-            size: part_size,
+            size: block_size,
         };
 
-        self.push(part);
+        self.push(block);
 
-        part
+        block
     }
 
     fn len(&self) -> usize {
         self.len()
     }
 
-    fn truncate(&mut self, offset: usize) -> Option<(usize, usize, Part)> {
-        let idx = self.position_part_containing_offset(offset)?;
+    fn truncate(&mut self, offset: usize) -> Option<(usize, usize, Block)> {
+        let idx = self.position_block_containing_offset(offset)?;
 
-        let mut truncated_part = self.get_part_at_idx(idx)?;
+        let mut truncated_block = self.get_block_at_idx(idx)?;
 
         let _ = self.split_off(idx);
 
-        let old_part_size = truncated_part.size;
+        let old_block_size = truncated_block.size;
 
-        truncated_part.size -= truncated_part.end() - offset;
+        truncated_block.size -= truncated_block.end() - offset;
 
-        self.push(truncated_part);
+        self.push(truncated_block);
 
-        Some((idx, old_part_size, truncated_part))
+        Some((idx, old_block_size, truncated_block))
     }
 
     fn clear(&mut self) {
@@ -99,56 +99,56 @@ impl PartMap for Vec<Part> {
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
-pub struct FixedPartSizeMap {
-    part_size: usize,
+pub struct FixedBlockSizeMap {
+    block_size: usize,
     len: usize,
 }
 
-impl PartMap for FixedPartSizeMap {
-    fn position_part_containing_offset(&self, offset: usize) -> Option<usize> {
-        let part_idx = offset / self.part_size;
+impl BlockMap for FixedBlockSizeMap {
+    fn position_block_containing_offset(&self, offset: usize) -> Option<usize> {
+        let block_idx = offset / self.block_size;
 
-        (part_idx < self.len).then_some(part_idx)
+        (block_idx < self.len).then_some(block_idx)
     }
 
-    fn get_part_at_idx(&self, part_idx: usize) -> Option<Part> {
-        (part_idx < self.len).then_some(Part {
-            offset: part_idx * self.part_size,
-            size: self.part_size,
+    fn get_block_at_idx(&self, block_idx: usize) -> Option<Block> {
+        (block_idx < self.len).then_some(Block {
+            offset: block_idx * self.block_size,
+            size: self.block_size,
         })
     }
 
-    fn get_part_containing_offset(&self, offset: usize) -> Option<Part> {
-        let part_idx = offset / self.part_size;
+    fn get_block_containing_offset(&self, offset: usize) -> Option<Block> {
+        let block_idx = offset / self.block_size;
 
-        (part_idx < self.len).then_some(Part {
-            offset: part_idx * self.part_size,
-            size: self.part_size,
+        (block_idx < self.len).then_some(Block {
+            offset: block_idx * self.block_size,
+            size: self.block_size,
         })
     }
 
-    fn append_part_with_part_size(&mut self, _: usize) -> Part {
-        let part = Part {
-            offset: self.len * self.part_size,
-            size: self.part_size,
+    fn append_block_with_block_size(&mut self, _: usize) -> Block {
+        let block = Block {
+            offset: self.len * self.block_size,
+            size: self.block_size,
         };
 
         self.len += 1;
 
-        part
+        block
     }
 
     fn len(&self) -> usize {
         self.len
     }
 
-    fn truncate(&mut self, offset: usize) -> Option<(usize, usize, Part)> {
-        let idx = self.position_part_containing_offset(offset)?;
+    fn truncate(&mut self, offset: usize) -> Option<(usize, usize, Block)> {
+        let idx = self.position_block_containing_offset(offset)?;
 
         self.len = idx;
 
-        self.get_part_at_idx(self.len() - 1)
-            .map(|x| (self.len() - 1, self.part_size, x))
+        self.get_block_at_idx(self.len() - 1)
+            .map(|x| (self.len() - 1, self.block_size, x))
     }
 
     fn clear(&mut self) {

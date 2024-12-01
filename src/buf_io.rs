@@ -18,12 +18,12 @@ use crate::{
     stream::{self, Lender, Stream},
 };
 
-pub enum BufferedReadByteBuf<T> {
-    Buffered(Bytes),
+pub enum BufReadByteBuf<T> {
+    Buf(Bytes),
     Read(T),
 }
 
-impl<T> Deref for BufferedReadByteBuf<T>
+impl<T> Deref for BufReadByteBuf<T>
 where
     T: Deref<Target = [u8]>,
 {
@@ -31,50 +31,48 @@ where
 
     fn deref(&self) -> &Self::Target {
         match self {
-            BufferedReadByteBuf::Buffered(buffered) => buffered.deref(),
-            BufferedReadByteBuf::Read(read) => read.deref(),
+            BufReadByteBuf::Buf(buf) => buf.deref(),
+            BufReadByteBuf::Read(read) => read.deref(),
         }
     }
 }
 
-pub struct BufferedByteLender<BL>(PhantomData<BL>);
+pub struct BufByteLender<BL>(PhantomData<BL>);
 
-impl<BL> ByteLender for BufferedByteLender<BL>
+impl<BL> ByteLender for BufByteLender<BL>
 where
     BL: ByteLender,
 {
-    type ByteBuf<'a> = BufferedReadByteBuf<BL::ByteBuf<'a>>
+    type ByteBuf<'a> = BufReadByteBuf<BL::ByteBuf<'a>>
     where
         Self: 'a;
 }
 
-pub struct OnceBufferedReadResult<E>(Option<Result<Bytes, E>>);
+pub struct OnceBufReadResult<E>(Option<Result<Bytes, E>>);
 
-impl<RBL, E> Stream<FallibleByteLender<BufferedByteLender<RBL>, E>> for OnceBufferedReadResult<E>
+impl<RBL, E> Stream<FallibleByteLender<BufByteLender<RBL>, E>> for OnceBufReadResult<E>
 where
     RBL: ByteLender,
 {
     async fn next<'a>(
         &'a mut self,
-    ) -> Option<<FallibleByteLender<BufferedByteLender<RBL>, E> as Lender>::Item<'a>>
+    ) -> Option<<FallibleByteLender<BufByteLender<RBL>, E> as Lender>::Item<'a>>
     where
-        FallibleByteLender<BufferedByteLender<RBL>, E>: 'a,
+        FallibleByteLender<BufByteLender<RBL>, E>: 'a,
     {
-        self.0
-            .take()
-            .map(|bytes| bytes.map(BufferedReadByteBuf::Buffered))
+        self.0.take().map(|bytes| bytes.map(BufReadByteBuf::Buf))
     }
 }
 
 #[allow(unused)]
-pub struct BufferedAppender<R, P, S> {
+pub struct BufAppender<R, P, S> {
     inner: R,
     buffer: AnchoredBuffer<P>,
     flush_state: FlushState,
     size: S,
 }
 
-pub enum BufferedAppenderError<E> {
+pub enum BufAppenderError<E> {
     InnerError(E),
 
     BufferError(BufferError),
@@ -88,20 +86,20 @@ pub enum BufferedAppenderError<E> {
     IntegerConversionError,
 }
 
-impl<E> From<IntegerConversionError> for BufferedAppenderError<E> {
+impl<E> From<IntegerConversionError> for BufAppenderError<E> {
     fn from(_: IntegerConversionError) -> Self {
         Self::IntegerConversionError
     }
 }
 
-impl<R, P, S> FallibleEntity for BufferedAppender<R, P, S>
+impl<R, P, S> FallibleEntity for BufAppender<R, P, S>
 where
     R: FallibleEntity,
 {
-    type Error = BufferedAppenderError<R::Error>;
+    type Error = BufAppenderError<R::Error>;
 }
 
-impl<R> SizedEntity for BufferedAppender<R, R::Position, R::Size>
+impl<R> SizedEntity for BufAppender<R, R::Position, R::Size>
 where
     R: SizedEntity,
 {
@@ -114,7 +112,7 @@ where
     }
 }
 
-impl<R, BL> AsyncRead<BufferedByteLender<BL>> for BufferedAppender<R, R::Position, R::Size>
+impl<R, BL> AsyncRead<BufByteLender<BL>> for BufAppender<R, R::Position, R::Size>
 where
     R: AsyncRead<BL>,
     BL: ByteLender,
@@ -123,32 +121,29 @@ where
         &'a mut self,
         position: Self::Position,
         size: Self::Size,
-    ) -> Result<
-        ReadBytes<<BufferedByteLender<BL> as ByteLender>::ByteBuf<'a>, Self::Size>,
-        Self::Error,
-    >
+    ) -> Result<ReadBytes<<BufByteLender<BL> as ByteLender>::ByteBuf<'a>, Self::Size>, Self::Error>
     where
-        BufferedByteLender<BL>: 'a,
+        BufByteLender<BL>: 'a,
     {
         match position {
             pos if !self.contains(pos) => Err(Self::Error::ReadBeyondWrittenArea),
             pos if self.buffer.contains_position(pos) => self
                 .buffer
                 .read_at(pos, size)
-                .map(|x| x.map(BufferedReadByteBuf::Buffered))
+                .map(|x| x.map(BufReadByteBuf::Buf))
                 .map_err(Self::Error::BufferError),
             pos if self.inner.contains(pos) => self
                 .inner
                 .read_at(pos, size)
                 .await
-                .map(|x| x.map(BufferedReadByteBuf::Read))
+                .map(|x| x.map(BufReadByteBuf::Read))
                 .map_err(Self::Error::InnerError),
             _ => Err(Self::Error::ReadGapEncountered),
         }
     }
 }
 
-impl<R> AsyncBufRead for BufferedAppender<R, R::Position, R::Size>
+impl<R> AsyncBufRead for BufAppender<R, R::Position, R::Size>
 where
     R: AsyncBufRead,
 {
@@ -211,7 +206,7 @@ pub enum FlushState {
     Clean,
 }
 
-impl<R> AsyncFlush for BufferedAppender<R, R::Position, R::Size>
+impl<R> AsyncFlush for BufAppender<R, R::Position, R::Size>
 where
     R: AsyncFlush + AsyncAppend,
 {
@@ -278,7 +273,7 @@ where
     }
 }
 
-impl<R> AsyncAppend for BufferedAppender<R, R::Position, R::Size>
+impl<R> AsyncAppend for BufAppender<R, R::Position, R::Size>
 where
     R: AsyncAppend + AsyncFlush,
 {
@@ -382,7 +377,7 @@ where
     }
 }
 
-impl<R> AsyncClose for BufferedAppender<R, R::Position, R::Size>
+impl<R> AsyncClose for BufAppender<R, R::Position, R::Size>
 where
     R: AsyncAppend + AsyncFlush + AsyncClose,
 {
@@ -393,7 +388,7 @@ where
     }
 }
 
-impl<R, P, S> AsyncRemove for BufferedAppender<R, P, S>
+impl<R, P, S> AsyncRemove for BufAppender<R, P, S>
 where
     R: AsyncRemove,
 {
@@ -402,7 +397,7 @@ where
     }
 }
 
-impl<R> AsyncTruncate for BufferedAppender<R, R::Position, R::Size>
+impl<R> AsyncTruncate for BufAppender<R, R::Position, R::Size>
 where
     R: AsyncTruncate,
 {
@@ -427,7 +422,7 @@ where
     }
 }
 
-impl<R, RBL> StreamRead<BufferedByteLender<RBL>> for BufferedAppender<R, R::Position, R::Size>
+impl<R, RBL> StreamRead<BufByteLender<RBL>> for BufAppender<R, R::Position, R::Size>
 where
     R: StreamRead<RBL>,
     R::Error: 'static,
@@ -437,9 +432,9 @@ where
         &'a mut self,
         position: Self::Position,
         size: Self::Size,
-    ) -> impl Stream<FallibleByteLender<BufferedByteLender<RBL>, Self::Error>> + 'a
+    ) -> impl Stream<FallibleByteLender<BufByteLender<RBL>, Self::Error>> + 'a
     where
-        BufferedByteLender<R::Error>: 'a,
+        BufByteLender<R::Error>: 'a,
     {
         let buffer_anchor_position = self.buffer.anchor_position();
 
@@ -458,7 +453,7 @@ where
             .checked_sub(&buffer_read_start)
             .unwrap_or(zero());
 
-        let buffered_read_necessary = expected_buffer_read_size > zero();
+        let buf_read_necessary = expected_buffer_read_size > zero();
 
         stream::chain(
             stream::latch(
@@ -468,12 +463,12 @@ where
                     |_: &(), stream_item_bytebuf_result| {
                         stream_item_bytebuf_result
                             .map_err(Self::Error::InnerError)
-                            .map(BufferedReadByteBuf::Read)
+                            .map(BufReadByteBuf::Read)
                     },
                 ),
                 inner_read_necessary,
             ),
-            OnceBufferedReadResult(buffered_read_necessary.then(|| {
+            OnceBufReadResult(buf_read_necessary.then(|| {
                 self.buffer
                     .read_at(buffer_read_start, expected_buffer_read_size)
                     .map(
@@ -489,33 +484,33 @@ where
 }
 
 #[allow(unused)]
-pub struct BufferedReader<R, P, S> {
+pub struct BufReader<R, P, S> {
     inner: R,
     buffer: AnchoredBuffer<P>,
     size: S,
 }
 
-pub enum BufferedReaderError<E> {
+pub enum BufReaderError<E> {
     InnerError(E),
     BufferError(BufferError),
     ReadBeyondWrittenArea,
     IntegerConversionError,
 }
 
-impl<E> From<IntegerConversionError> for BufferedReaderError<E> {
+impl<E> From<IntegerConversionError> for BufReaderError<E> {
     fn from(_: IntegerConversionError) -> Self {
         Self::IntegerConversionError
     }
 }
 
-impl<R, P, S> FallibleEntity for BufferedReader<R, P, S>
+impl<R, P, S> FallibleEntity for BufReader<R, P, S>
 where
     R: FallibleEntity,
 {
-    type Error = BufferedReaderError<R::Error>;
+    type Error = BufReaderError<R::Error>;
 }
 
-impl<R> SizedEntity for BufferedReader<R, R::Position, R::Size>
+impl<R> SizedEntity for BufReader<R, R::Position, R::Size>
 where
     R: SizedEntity,
 {
@@ -528,7 +523,7 @@ where
     }
 }
 
-impl<R> AsyncRead<OwnedByteLender<Bytes>> for BufferedReader<R, R::Position, R::Size>
+impl<R> AsyncRead<OwnedByteLender<Bytes>> for BufReader<R, R::Position, R::Size>
 where
     R: AsyncBufRead,
 {
@@ -607,7 +602,7 @@ where
     }
 }
 
-impl<R, BL> AsyncRead<BufferedByteLender<BL>> for BufferedReader<R, R::Position, R::Size>
+impl<R, BL> AsyncRead<BufByteLender<BL>> for BufReader<R, R::Position, R::Size>
 where
     R: AsyncRead<BL>,
     BL: ByteLender,
@@ -616,12 +611,9 @@ where
         &'a mut self,
         position: Self::Position,
         size: Self::Size,
-    ) -> Result<
-        ReadBytes<<BufferedByteLender<BL> as ByteLender>::ByteBuf<'a>, Self::Size>,
-        Self::Error,
-    >
+    ) -> Result<ReadBytes<<BufByteLender<BL> as ByteLender>::ByteBuf<'a>, Self::Size>, Self::Error>
     where
-        BufferedByteLender<BL>: 'a,
+        BufByteLender<BL>: 'a,
     {
         struct Reanchor<P>(P);
 
@@ -690,13 +682,13 @@ where
             Ok(ReadSource::Buffer) => self
                 .buffer
                 .read_at(position, size)
-                .map(|x| x.map(BufferedReadByteBuf::Buffered))
+                .map(|x| x.map(BufReadByteBuf::Buf))
                 .map_err(Self::Error::BufferError),
             Ok(ReadSource::Inner) => self
                 .inner
                 .read_at(position, size)
                 .await
-                .map(|x| x.map(BufferedReadByteBuf::Read))
+                .map(|x| x.map(BufReadByteBuf::Read))
                 .map_err(Self::Error::InnerError),
             Err(err) => Err(err),
         }
@@ -704,7 +696,7 @@ where
 }
 
 #[allow(unused)]
-enum BufferedReaderStreamReadState<P, S> {
+enum BufReaderStreamReadState<P, S> {
     ConsumeBuffer {
         buffer_read_position: P,
         buffer_read_size: S,
@@ -726,8 +718,8 @@ enum BufferedReaderStreamReadState<P, S> {
 }
 
 #[allow(unused)]
-pub struct BufferedReaderStreamReadStream<'a, R, RS, P, S> {
-    state: BufferedReaderStreamReadState<P, S>,
+pub struct BufReaderStreamReadStream<'a, R, RS, P, S> {
+    state: BufReaderStreamReadState<P, S>,
 
     inner_stream_read_stream: RS,
 
@@ -738,11 +730,11 @@ pub struct BufferedReaderStreamReadStream<'a, R, RS, P, S> {
     _phantom_data: PhantomData<R>,
 }
 
-pub type FallibleBufferedReaderByteLender<RBL, E> =
-    FallibleByteLender<BufferedByteLender<RBL>, BufferedReaderError<E>>;
+pub type FallibleBufReaderByteLender<RBL, E> =
+    FallibleByteLender<BufByteLender<RBL>, BufReaderError<E>>;
 
-impl<'x, R, RBL, RS> Stream<FallibleBufferedReaderByteLender<RBL, R::Error>>
-    for BufferedReaderStreamReadStream<'x, R, RS, R::Position, R::Size>
+impl<'x, R, RBL, RS> Stream<FallibleBufReaderByteLender<RBL, R::Error>>
+    for BufReaderStreamReadStream<'x, R, RS, R::Position, R::Size>
 where
     R: StreamRead<RBL>,
     R::Error: 'static,
@@ -751,12 +743,12 @@ where
 {
     async fn next<'a>(
         &'a mut self,
-    ) -> Option<<FallibleBufferedReaderByteLender<RBL, R::Error> as Lender>::Item<'a>>
+    ) -> Option<<FallibleBufReaderByteLender<RBL, R::Error> as Lender>::Item<'a>>
     where
-        FallibleBufferedReaderByteLender<RBL, R::Error>: 'a,
+        FallibleBufReaderByteLender<RBL, R::Error>: 'a,
     {
         let (item, next_state) = match self.state {
-            BufferedReaderStreamReadState::ConsumeBuffer {
+            BufReaderStreamReadState::ConsumeBuffer {
                 buffer_read_position,
                 buffer_read_size,
                 remainder,
@@ -764,30 +756,28 @@ where
                 Some(
                     self.buffer
                         .read_at(buffer_read_position, buffer_read_size)
-                        .map_err(BufferedReaderError::BufferError)
+                        .map_err(BufReaderError::BufferError)
                         .map(
                             |ReadBytes {
                                  read_bytes,
                                  read_len: _,
-                             }| {
-                                BufferedReadByteBuf::Buffered(read_bytes)
-                            },
+                             }| { BufReadByteBuf::Buf(read_bytes) },
                         ),
                 ),
-                BufferedReaderStreamReadState::FillBuffer {
+                BufReaderStreamReadState::FillBuffer {
                     inner_read_position: buffer_read_position + buffer_read_size.into(),
                     remainder,
                 },
             ),
 
-            BufferedReaderStreamReadState::FillBuffer {
+            BufReaderStreamReadState::FillBuffer {
                 inner_read_position,
                 remainder,
             } if remainder == zero() || inner_read_position >= self.inner_size.into() => {
-                (None, BufferedReaderStreamReadState::Done)
+                (None, BufReaderStreamReadState::Done)
             }
 
-            BufferedReaderStreamReadState::FillBuffer {
+            BufReaderStreamReadState::FillBuffer {
                 inner_read_position,
                 remainder,
             } => match self.inner_stream_read_stream.next().await {
@@ -801,15 +791,15 @@ where
 
                     match (new_anchor_position, remainder) {
                         (Some(anchor_position), Some(rem)) => (
-                            Some(Ok(BufferedReadByteBuf::Read(read_bytes))),
-                            BufferedReaderStreamReadState::ReanchorBuffer {
+                            Some(Ok(BufReadByteBuf::Read(read_bytes))),
+                            BufReaderStreamReadState::ReanchorBuffer {
                                 anchor_position,
                                 remainder: rem,
                             },
                         ),
                         _ => (
-                            Some(Err(BufferedReaderError::IntegerConversionError)),
-                            BufferedReaderStreamReadState::Done,
+                            Some(Err(BufReaderError::IntegerConversionError)),
+                            BufReaderStreamReadState::Done,
                         ),
                     }
                 }
@@ -836,48 +826,48 @@ where
 
                     match (new_inner_read_position, remainder, buffer_append_result) {
                         (_, _, Err(err)) => (
-                            Some(Err(BufferedReaderError::BufferError(err))),
-                            BufferedReaderStreamReadState::Done,
+                            Some(Err(BufReaderError::BufferError(err))),
+                            BufReaderStreamReadState::Done,
                         ),
                         (Some(pos), Some(rem), Ok(())) => (
-                            Some(Ok(BufferedReadByteBuf::Read(read_bytes))),
-                            BufferedReaderStreamReadState::FillBuffer {
+                            Some(Ok(BufReadByteBuf::Read(read_bytes))),
+                            BufReaderStreamReadState::FillBuffer {
                                 inner_read_position: pos,
                                 remainder: rem,
                             },
                         ),
 
                         _ => (
-                            Some(Err(BufferedReaderError::IntegerConversionError)),
-                            BufferedReaderStreamReadState::Done,
+                            Some(Err(BufReaderError::IntegerConversionError)),
+                            BufReaderStreamReadState::Done,
                         ),
                     }
                 }
 
                 Some(Err(err)) => (
-                    Some(Err(BufferedReaderError::InnerError(err))),
-                    BufferedReaderStreamReadState::Done,
+                    Some(Err(BufReaderError::InnerError(err))),
+                    BufReaderStreamReadState::Done,
                 ),
 
-                None => (None, BufferedReaderStreamReadState::Done),
+                None => (None, BufReaderStreamReadState::Done),
             },
 
-            BufferedReaderStreamReadState::ReanchorBuffer {
+            BufReaderStreamReadState::ReanchorBuffer {
                 anchor_position,
                 remainder,
             } => {
                 self.buffer.re_anchor(anchor_position);
 
                 (
-                    Some(Ok(BufferedReadByteBuf::Buffered(Bytes::new()))),
-                    BufferedReaderStreamReadState::FillBuffer {
+                    Some(Ok(BufReadByteBuf::Buf(Bytes::new()))),
+                    BufReaderStreamReadState::FillBuffer {
                         inner_read_position: anchor_position,
                         remainder,
                     },
                 )
             }
 
-            BufferedReaderStreamReadState::Done => (None, BufferedReaderStreamReadState::Done),
+            BufReaderStreamReadState::Done => (None, BufReaderStreamReadState::Done),
         };
 
         self.state = next_state;
@@ -886,7 +876,7 @@ where
     }
 }
 
-impl<R, RBL> StreamRead<BufferedByteLender<RBL>> for BufferedReader<R, R::Position, R::Size>
+impl<R, RBL> StreamRead<BufByteLender<RBL>> for BufReader<R, R::Position, R::Size>
 where
     R: StreamRead<RBL>,
     R::Error: 'static,
@@ -896,9 +886,9 @@ where
         &'a mut self,
         position: Self::Position,
         size: Self::Size,
-    ) -> impl Stream<FallibleByteLender<BufferedByteLender<RBL>, Self::Error>> + 'a
+    ) -> impl Stream<FallibleByteLender<BufByteLender<RBL>, Self::Error>> + 'a
     where
-        BufferedByteLender<RBL>: 'a,
+        BufByteLender<RBL>: 'a,
     {
         let inner_size = self.inner.size();
 
@@ -911,7 +901,7 @@ where
                 let remainder = size.checked_sub(&avail_to_read_from_pos).unwrap_or(zero());
 
                 (
-                    BufferedReaderStreamReadState::ConsumeBuffer {
+                    BufReaderStreamReadState::ConsumeBuffer {
                         buffer_read_position: position,
                         buffer_read_size: avail_to_read_from_pos,
                         remainder,
@@ -922,7 +912,7 @@ where
             }
 
             pos => (
-                BufferedReaderStreamReadState::FillBuffer {
+                BufReaderStreamReadState::FillBuffer {
                     inner_read_position: pos,
                     remainder: size,
                 },
@@ -931,7 +921,7 @@ where
             ),
         };
 
-        BufferedReaderStreamReadStream {
+        BufReaderStreamReadStream {
             state: initial_state,
             inner_stream_read_stream: self.inner.read_stream_at(inner_read_pos, inner_read_size),
             buffer: &mut self.buffer,
@@ -941,7 +931,7 @@ where
     }
 }
 
-impl<R> AsyncTruncate for BufferedReader<R, R::Position, R::Size>
+impl<R> AsyncTruncate for BufReader<R, R::Position, R::Size>
 where
     R: AsyncTruncate,
 {
@@ -967,7 +957,7 @@ where
     }
 }
 
-impl<R, P, S> AsyncRemove for BufferedReader<R, P, S>
+impl<R, P, S> AsyncRemove for BufReader<R, P, S>
 where
     R: AsyncRemove,
 {
@@ -976,7 +966,7 @@ where
     }
 }
 
-impl<R, P, S> AsyncFlush for BufferedReader<R, P, S>
+impl<R, P, S> AsyncFlush for BufReader<R, P, S>
 where
     R: AsyncFlush,
 {
@@ -985,7 +975,7 @@ where
     }
 }
 
-impl<R, P, S> AsyncClose for BufferedReader<R, P, S>
+impl<R, P, S> AsyncClose for BufReader<R, P, S>
 where
     R: AsyncClose + AsyncFlush,
 {
