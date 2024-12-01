@@ -32,16 +32,16 @@ laminarmq-io = { git = "https://github.com/arindas/laminarmq-io.git" }
 
 This crate provides the following I/O related traits:
 
-| **Trait**         | **Type**                           | **Wrapper Implemented On**                                                    |
-| ----------------- | ---------------------------------- | ----------------------------------------------------------------------------- |
-| [`AsyncRead`]     | `R I/O`                            | [`AsyncBufRead`], [`AsyncRead`] <br> (struct [`BufferedReader`])              |
-| [`AsyncBufRead`]  | `R I/O`                            | -                                                                             |
-| [`StreamRead`]    | _Streaming_ `R I/O`                | [`AsyncRead`] (struct [`AsyncReadStreamRead`],<br> struct [`BufferedReader`]) |
-| [`AsyncAppend`]   | `W I/O`                            | [`AsyncAppend`] (struct [`BufferedAppender`])                                 |
-| [`StreamAppend`]  | _Streaming_ `W I/O`                | [`AsyncAppend`] (_trait impl_)                                                |
-| [`AsyncTruncate`] | `W I/O`                            | -                                                                             |
-| [`AsyncRemove`]   | Management                         | -                                                                             |
-| [`AsyncClose`]    | <br>Management <img width="200" /> | <br> - <img width="500" />                                                    |
+| **Trait**         | **Type**                           | **Wrapper Implemented On**                                               |
+| ----------------- | ---------------------------------- | ------------------------------------------------------------------------ |
+| [`AsyncRead`]     | `Read I/O`                         | [`AsyncBufRead`], [`AsyncRead`] <br> (struct [`BufReader`])              |
+| [`AsyncBufRead`]  | `Read I/O`                         | -                                                                        |
+| [`StreamRead`]    | _Streaming_ `Read I/O`             | [`AsyncRead`] (struct [`AsyncReadStreamRead`],<br> struct [`BufReader`]) |
+| [`AsyncAppend`]   | `Write I/O`                        | [`AsyncAppend`] (struct [`BufAppender`])                                 |
+| [`StreamAppend`]  | _Streaming_ `Write I/O`            | [`AsyncAppend`] (_trait impl_)                                           |
+| [`AsyncTruncate`] | `Write I/O`                        | -                                                                        |
+| [`AsyncRemove`]   | Management                         | -                                                                        |
+| [`AsyncClose`]    | <br>Management <img width="200" /> | <br> - <img width="500" />                                               |
 
 > The "Wrapper Implemented on" column denotes on which underlying trait, the current trait has an impl with the help of a wrapper struct wrapping the mentioned trait.
 > For example, [`StreamRead`] is implemented by a wrapper struct [`AsyncReadStreamRead`] which wraps an [`AsyncRead`] instance.

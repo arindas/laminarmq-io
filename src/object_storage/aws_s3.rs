@@ -19,21 +19,21 @@ use std::{
     iter,
 };
 
-use crate::object_storage::PartMap;
+use crate::object_storage::BlockMap;
 
-pub const PART_SIZE_MAP_KEY_SUFFIX: &str = "_part_size_map.json";
+pub const BLOCK_SIZE_MAP_KEY_SUFFIX: &str = "_block_size_map.json";
 
-pub const PART_EXTENSION: &str = "txt";
+pub const BLOCK_EXTENSION: &str = "txt";
 
-async fn part_map_append_missing_parts_from_aws_s3<P: PartMap>(
-    part_map: &mut P,
+async fn block_map_append_missing_blocks_from_aws_s3<BM: BlockMap>(
+    block_map: &mut BM,
     aws_s3_client: &Client,
     bucket: &String,
     object_prefix: &String,
 ) -> Result<usize, AwsS3Error> {
-    let mut parts_added = 0;
+    let mut blocks_added = 0;
 
-    let part_suffix = format!(".{}", PART_EXTENSION);
+    let block_suffix = format!(".{}", BLOCK_EXTENSION);
 
     for object in aws_s3_client
         .list_objects_v2()
@@ -48,63 +48,63 @@ async fn part_map_append_missing_parts_from_aws_s3<P: PartMap>(
 
         let object_size = object.size().unwrap_or(0);
 
-        if !key.ends_with(&part_suffix) {
+        if !key.ends_with(&block_suffix) {
             continue;
         }
 
         let start = key.find('_').ok_or(AwsS3Error::ParseError(
-            "Failed to find _ delim in part object key".to_string(),
+            "Failed to find _ delim in block object key".to_string(),
         ))? + 1;
         let end = key.find('.').ok_or(AwsS3Error::ParseError(
-            "Failed to find . delim in part object key".to_string(),
+            "Failed to find . delim in block object key".to_string(),
         ))?;
 
         if start >= end || end > key.len() {
             return Err(AwsS3Error::ParseError(
-                "Invalid part_idx parse slice[] bounds".to_string(),
+                "Invalid block_idx parse slice[] bounds".to_string(),
             ));
         }
 
-        let part_idx: &usize = &key[start..end]
+        let block_idx: &usize = &key[start..end]
             .parse()
-            .map_err(|_| AwsS3Error::ParseError("Failed parsing part idx".to_string()))?;
+            .map_err(|_| AwsS3Error::ParseError("Failed parsing block idx".to_string()))?;
 
-        if *part_idx < part_map.len() {
+        if *block_idx < block_map.len() {
             continue;
         }
 
-        part_map.append_part_with_part_size(
+        block_map.append_block_with_block_size(
             object_size
                 .try_into()
                 .map_err(|_| AwsS3Error::IntegerConversionError)?,
         );
 
-        parts_added += 1;
+        blocks_added += 1;
     }
 
-    Ok(parts_added)
+    Ok(blocks_added)
 }
 
 #[allow(unused)]
-pub struct AwsS3BackedFile<P> {
+pub struct AwsS3BackedFile<BM> {
     client: Client,
 
     bucket: String,
     object_prefix: String,
 
-    part_size_map: P,
+    block_size_map: BM,
 }
 
-impl<P> SizedEntity for AwsS3BackedFile<P>
+impl<BM> SizedEntity for AwsS3BackedFile<BM>
 where
-    P: PartMap,
+    BM: BlockMap,
 {
     type Position = usize;
 
     type Size = usize;
 
     fn size(&self) -> Self::Size {
-        self.part_size_map.size()
+        self.block_size_map.size()
     }
 }
 
@@ -122,20 +122,20 @@ pub enum AwsS3Error {
     PositionOutOfBounds,
 }
 
-impl<P> AwsS3BackedFile<P>
+impl<BM> AwsS3BackedFile<BM>
 where
-    P: for<'a> Deserialize<'a> + PartMap,
+    BM: for<'a> Deserialize<'a> + BlockMap,
 {
     pub async fn new(
         aws_s3_client: Client,
         bucket: String,
         object_prefix: String,
-        mut fallback_part_map: P,
+        mut fallback_block_map: BM,
     ) -> Result<Self, AwsS3Error> {
         let get_object_output = aws_s3_client
             .get_object()
             .bucket(&bucket)
-            .key(format!("{}{}", &object_prefix, PART_SIZE_MAP_KEY_SUFFIX))
+            .key(format!("{}{}", &object_prefix, BLOCK_SIZE_MAP_KEY_SUFFIX))
             .send()
             .await
             .map_err(|err| AwsS3Error::AwsSdkError(err.to_string()))?;
@@ -147,15 +147,15 @@ where
             .map_err(|err| AwsS3Error::AwsSdkError(err.to_string()))?
             .into_bytes();
 
-        let mut part_size_map = if let Ok(part_map) = serde_json::from_slice(&bytes) {
-            part_map
+        let mut block_size_map = if let Ok(block_map) = serde_json::from_slice(&bytes) {
+            block_map
         } else {
-            fallback_part_map.clear();
-            fallback_part_map
+            fallback_block_map.clear();
+            fallback_block_map
         };
 
-        part_map_append_missing_parts_from_aws_s3(
-            &mut part_size_map,
+        block_map_append_missing_blocks_from_aws_s3(
+            &mut block_size_map,
             &aws_s3_client,
             &bucket,
             &object_prefix,
@@ -166,7 +166,7 @@ where
             client: aws_s3_client,
             bucket,
             object_prefix,
-            part_size_map,
+            block_size_map,
         })
     }
 }
@@ -177,7 +177,7 @@ impl From<IntegerConversionError> for AwsS3Error {
     }
 }
 
-impl<P> FallibleEntity for AwsS3BackedFile<P> {
+impl<BM> FallibleEntity for AwsS3BackedFile<BM> {
     type Error = AwsS3Error;
 }
 
@@ -240,9 +240,9 @@ impl ByteLender for AwsS3ByteLender {
         Self: 'a;
 }
 
-impl<P> StreamRead<AwsS3ByteLender> for AwsS3BackedFile<P>
+impl<BM> StreamRead<AwsS3ByteLender> for AwsS3BackedFile<BM>
 where
-    P: PartMap,
+    BM: BlockMap,
 {
     fn read_stream_at<'a>(
         &'a mut self,
@@ -252,42 +252,42 @@ where
     where
         AwsS3ByteLender: 'a,
     {
-        let first_part_idx = self
-            .part_size_map
-            .position_part_containing_offset(position)
-            .unwrap_or(self.part_size_map.len());
+        let first_block_idx = self
+            .block_size_map
+            .position_block_containing_offset(position)
+            .unwrap_or(self.block_size_map.len());
 
-        let get_object_output_future_iter = (first_part_idx..self.part_size_map.len())
+        let get_object_output_future_iter = (first_block_idx..self.block_size_map.len())
             .scan(
                 (position, size),
                 |(read_position, bytes_left_to_read), idx| {
-                    let part = self.part_size_map.get_part_at_idx(idx)?;
+                    let block = self.block_size_map.get_block_at_idx(idx)?;
 
-                    if *bytes_left_to_read <= zero() || *read_position >= part.end() {
+                    if *bytes_left_to_read <= zero() || *read_position >= block.end() {
                         return None;
                     }
 
-                    let range_start = max(*read_position, part.offset);
+                    let range_start = max(*read_position, block.offset);
 
-                    let range_end = min(range_start + *bytes_left_to_read, part.end());
+                    let range_end = min(range_start + *bytes_left_to_read, block.end());
 
                     *bytes_left_to_read -= range_end - range_start;
 
-                    // normalize range to [0, part.size)
-                    let range_start = range_start - part.offset;
-                    let range_end = range_end - part.offset;
+                    // normalize range to [0, block.size)
+                    let range_start = range_start - block.offset;
+                    let range_end = range_end - block.offset;
 
                     Some((idx, range_start, range_end - 1))
                 },
             )
-            .map(|(part_idx, range_start, range_end)| {
+            .map(|(block_idx, range_start, range_end)| {
                 GetObjectOutputFuture::new(
                     self.client
                         .get_object()
                         .bucket(&self.bucket)
                         .key(format!(
                             "{}_{}.{}",
-                            &self.object_prefix, part_idx, PART_EXTENSION
+                            &self.object_prefix, block_idx, BLOCK_EXTENSION
                         ))
                         .range(format!("bytes={}-{}", range_start, range_end))
                         .send()
@@ -301,15 +301,17 @@ where
     }
 }
 
-impl<P> AsyncAppend for AwsS3BackedFile<P>
+impl<BM> AsyncAppend for AwsS3BackedFile<BM>
 where
-    P: PartMap,
+    BM: BlockMap,
 {
     async fn append(
         &mut self,
         bytes: Bytes,
     ) -> Result<AppendInfo<Self::Position, Self::Size>, UnwrittenError<Self::Error>> {
-        let part = self.part_size_map.append_part_with_part_size(bytes.len());
+        let block = self
+            .block_size_map
+            .append_block_with_block_size(bytes.len());
 
         self.client
             .put_object()
@@ -317,8 +319,8 @@ where
             .key(format!(
                 "{}_{}.{}",
                 &self.object_prefix,
-                self.part_size_map.len() - 1,
-                PART_EXTENSION
+                self.block_size_map.len() - 1,
+                BLOCK_EXTENSION
             ))
             .body(bytes.clone().into())
             .send()
@@ -331,35 +333,39 @@ where
         Ok(AppendInfo {
             bytes,
             location: AppendLocation {
-                write_position: part.offset,
-                write_len: part.size,
+                write_position: block.offset,
+                write_len: block.size,
             },
         })
     }
 }
 
-impl<P> AsyncTruncate for AwsS3BackedFile<P>
+impl<BM> AsyncTruncate for AwsS3BackedFile<BM>
 where
-    P: PartMap + Serialize,
+    BM: BlockMap + Serialize,
 {
     async fn truncate(&mut self, position: Self::Position) -> Result<(), Self::Error> {
-        let old_part_size_map_len = self.part_size_map.len();
+        let old_block_size_map_len = self.block_size_map.len();
 
-        let (last_part_idx, old_last_part_size, last_part_after_truncate) = self
-            .part_size_map
+        let (last_block_idx, old_last_block_size, last_block_after_truncate) = self
+            .block_size_map
             .truncate(position)
             .ok_or(AwsS3Error::PositionOutOfBounds)?;
 
-        if old_last_part_size > last_part_after_truncate.size {
+        if old_last_block_size > last_block_after_truncate.size {
             let get_object_output = self
                 .client
                 .get_object()
                 .bucket(&self.bucket)
                 .key(format!(
                     "{}_{}.{}",
-                    &self.object_prefix, last_part_idx, PART_EXTENSION
+                    &self.object_prefix, last_block_idx, BLOCK_EXTENSION
                 ))
-                .range(format!("bytes={}-{}", 0, last_part_after_truncate.size - 1))
+                .range(format!(
+                    "bytes={}-{}",
+                    0,
+                    last_block_after_truncate.size - 1
+                ))
                 .send()
                 .await
                 .map_err(|err| AwsS3Error::AwsSdkError(err.to_string()))?;
@@ -369,7 +375,7 @@ where
                 .bucket(&self.bucket)
                 .key(format!(
                     "{}_{}.{}",
-                    &self.object_prefix, last_part_idx, PART_EXTENSION
+                    &self.object_prefix, last_block_idx, BLOCK_EXTENSION
                 ))
                 .body(get_object_output.body)
                 .send()
@@ -377,13 +383,13 @@ where
                 .map_err(|err| AwsS3Error::AwsSdkError(err.to_string()))?;
         }
 
-        for part_idx in last_part_idx + 1..old_part_size_map_len {
+        for block_idx in last_block_idx + 1..old_block_size_map_len {
             self.client
                 .delete_object()
                 .bucket(&self.bucket)
                 .key(format!(
                     "{}_{}.{}",
-                    &self.object_prefix, part_idx, PART_EXTENSION
+                    &self.object_prefix, block_idx, BLOCK_EXTENSION
                 ))
                 .send()
                 .await
@@ -394,19 +400,19 @@ where
     }
 }
 
-impl<P> AsyncRemove for AwsS3BackedFile<P>
+impl<BM> AsyncRemove for AwsS3BackedFile<BM>
 where
-    P: PartMap,
+    BM: BlockMap,
 {
     async fn remove(self) -> Result<(), Self::Error> {
-        let keys = iter::once(format!(
-            "{}{}",
-            &self.object_prefix, PART_SIZE_MAP_KEY_SUFFIX
-        ))
-        .chain(
-            (0..self.part_size_map.len())
-                .map(|part_idx| format!("{}_{}.{}", &self.object_prefix, part_idx, PART_EXTENSION)),
-        );
+        let keys =
+            iter::once(format!(
+                "{}{}",
+                &self.object_prefix, BLOCK_SIZE_MAP_KEY_SUFFIX
+            ))
+            .chain((0..self.block_size_map.len()).map(|block_idx| {
+                format!("{}_{}.{}", &self.object_prefix, block_idx, BLOCK_EXTENSION)
+            }));
 
         for key in keys {
             self.client
@@ -422,9 +428,9 @@ where
     }
 }
 
-impl<P> AwsS3BackedFile<P>
+impl<BM> AwsS3BackedFile<BM>
 where
-    P: Serialize,
+    BM: Serialize,
 {
     async fn flush(&self) -> Result<(), AwsS3Error> {
         self.client
@@ -432,10 +438,10 @@ where
             .bucket(&self.bucket)
             .key(format!(
                 "{}{}",
-                &self.object_prefix, PART_SIZE_MAP_KEY_SUFFIX
+                &self.object_prefix, BLOCK_SIZE_MAP_KEY_SUFFIX
             ))
             .body(
-                serde_json::to_vec(&self.part_size_map)
+                serde_json::to_vec(&self.block_size_map)
                     .map_err(AwsS3Error::SerializationError)?
                     .into(),
             )
@@ -447,9 +453,9 @@ where
     }
 }
 
-impl<P> AsyncClose for AwsS3BackedFile<P>
+impl<BM> AsyncClose for AwsS3BackedFile<BM>
 where
-    P: Serialize,
+    BM: Serialize,
 {
     async fn close(self) -> Result<(), Self::Error> {
         self.flush().await?;
