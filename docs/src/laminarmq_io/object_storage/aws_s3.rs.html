@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/object_storage/aws_s3.rs`."><title>aws_s3.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-c5d6553a23f1e5a6.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="laminarmq_io" data-themes="" data-resource-suffix="" data-rustdoc-version="1.81.0 (eeb90cda1 2024-09-04)" data-channel="1.81.0" data-search-js="search-d234aafac6c221dd.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../../static.files/storage-118b08c4c78b968e.js"></script><script defer src="../../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-d2fab2bf619172d3.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-df360f571f6edeae.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/object_storage/aws_s3.rs`."><title>aws_s3.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-492a78a4a87dcc01.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="laminarmq_io" data-themes="" data-resource-suffix="" data-rustdoc-version="1.82.0 (f6e511eec 2024-10-15)" data-channel="1.82.0" data-search-js="search-a99f1315e7cc5121.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../../static.files/storage-118b08c4c78b968e.js"></script><script defer src="../../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-921df33f47b8780c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-3b12f09e550e0385.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
 <a href="#4" id="4">4</a>
@@ -457,6 +457,12 @@
 <a href="#457" id="457">457</a>
 <a href="#458" id="458">458</a>
 <a href="#459" id="459">459</a>
+<a href="#460" id="460">460</a>
+<a href="#461" id="461">461</a>
+<a href="#462" id="462">462</a>
+<a href="#463" id="463">463</a>
+<a href="#464" id="464">464</a>
+<a href="#465" id="465">465</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::io_types::{
     AppendInfo, AsyncAppend, AsyncClose, AsyncRemove, AsyncTruncate, ByteLender,
     FallibleByteLender, FallibleEntity, IntegerConversionError, SizedEntity, StreamRead,
@@ -478,21 +484,21 @@
     iter,
 };
 
-<span class="kw">use </span><span class="kw">crate</span>::object_storage::PartMap;
+<span class="kw">use </span><span class="kw">crate</span>::object_storage::BlockMap;
 
-<span class="kw">pub const </span>PART_SIZE_MAP_KEY_SUFFIX: <span class="kw-2">&amp;</span>str = <span class="string">"_part_size_map.json"</span>;
+<span class="kw">pub const </span>BLOCK_SIZE_MAP_KEY_SUFFIX: <span class="kw-2">&amp;</span>str = <span class="string">"_block_size_map.json"</span>;
 
-<span class="kw">pub const </span>PART_EXTENSION: <span class="kw-2">&amp;</span>str = <span class="string">"txt"</span>;
+<span class="kw">pub const </span>BLOCK_EXTENSION: <span class="kw-2">&amp;</span>str = <span class="string">"txt"</span>;
 
-<span class="kw">async fn </span>part_map_append_missing_parts_from_aws_s3&lt;P: PartMap&gt;(
-    part_map: <span class="kw-2">&amp;mut </span>P,
+<span class="kw">async fn </span>block_map_append_missing_blocks_from_aws_s3&lt;BM: BlockMap&gt;(
+    block_map: <span class="kw-2">&amp;mut </span>BM,
     aws_s3_client: <span class="kw-2">&amp;</span>Client,
     bucket: <span class="kw-2">&amp;</span>String,
     object_prefix: <span class="kw-2">&amp;</span>String,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;usize, AwsS3Error&gt; {
-    <span class="kw">let </span><span class="kw-2">mut </span>parts_added = <span class="number">0</span>;
+    <span class="kw">let </span><span class="kw-2">mut </span>blocks_added = <span class="number">0</span>;
 
-    <span class="kw">let </span>part_suffix = <span class="macro">format!</span>(<span class="string">".{}"</span>, PART_EXTENSION);
+    <span class="kw">let </span>block_suffix = <span class="macro">format!</span>(<span class="string">".{}"</span>, BLOCK_EXTENSION);
 
     <span class="kw">for </span>object <span class="kw">in </span>aws_s3_client
         .list_objects_v2()
@@ -507,63 +513,63 @@
 
         <span class="kw">let </span>object_size = object.size().unwrap_or(<span class="number">0</span>);
 
-        <span class="kw">if </span>!key.ends_with(<span class="kw-2">&amp;</span>part_suffix) {
+        <span class="kw">if </span>!key.ends_with(<span class="kw-2">&amp;</span>block_suffix) {
             <span class="kw">continue</span>;
         }
 
         <span class="kw">let </span>start = key.find(<span class="string">'_'</span>).ok_or(AwsS3Error::ParseError(
-            <span class="string">"Failed to find _ delim in part object key"</span>.to_string(),
+            <span class="string">"Failed to find _ delim in block object key"</span>.to_string(),
         ))<span class="question-mark">? </span>+ <span class="number">1</span>;
         <span class="kw">let </span>end = key.find(<span class="string">'.'</span>).ok_or(AwsS3Error::ParseError(
-            <span class="string">"Failed to find . delim in part object key"</span>.to_string(),
+            <span class="string">"Failed to find . delim in block object key"</span>.to_string(),
         ))<span class="question-mark">?</span>;
 
         <span class="kw">if </span>start &gt;= end || end &gt; key.len() {
             <span class="kw">return </span><span class="prelude-val">Err</span>(AwsS3Error::ParseError(
-                <span class="string">"Invalid part_idx parse slice[] bounds"</span>.to_string(),
+                <span class="string">"Invalid block_idx parse slice[] bounds"</span>.to_string(),
             ));
         }
 
-        <span class="kw">let </span>part_idx: <span class="kw-2">&amp;</span>usize = <span class="kw-2">&amp;</span>key[start..end]
+        <span class="kw">let </span>block_idx: <span class="kw-2">&amp;</span>usize = <span class="kw-2">&amp;</span>key[start..end]
             .parse()
-            .map_err(|<span class="kw">_</span>| AwsS3Error::ParseError(<span class="string">"Failed parsing part idx"</span>.to_string()))<span class="question-mark">?</span>;
+            .map_err(|<span class="kw">_</span>| AwsS3Error::ParseError(<span class="string">"Failed parsing block idx"</span>.to_string()))<span class="question-mark">?</span>;
 
-        <span class="kw">if </span><span class="kw-2">*</span>part_idx &lt; part_map.len() {
+        <span class="kw">if </span><span class="kw-2">*</span>block_idx &lt; block_map.len() {
             <span class="kw">continue</span>;
         }
 
-        part_map.append_part_with_part_size(
+        block_map.append_block_with_block_size(
             object_size
                 .try_into()
                 .map_err(|<span class="kw">_</span>| AwsS3Error::IntegerConversionError)<span class="question-mark">?</span>,
         );
 
-        parts_added += <span class="number">1</span>;
+        blocks_added += <span class="number">1</span>;
     }
 
-    <span class="prelude-val">Ok</span>(parts_added)
+    <span class="prelude-val">Ok</span>(blocks_added)
 }
 
 <span class="attr">#[allow(unused)]
-</span><span class="kw">pub struct </span>AwsS3BackedFile&lt;P&gt; {
+</span><span class="kw">pub struct </span>AwsS3BackedFile&lt;BM&gt; {
     client: Client,
 
     bucket: String,
     object_prefix: String,
 
-    part_size_map: P,
+    block_size_map: BM,
 }
 
-<span class="kw">impl</span>&lt;P&gt; SizedEntity <span class="kw">for </span>AwsS3BackedFile&lt;P&gt;
+<span class="kw">impl</span>&lt;BM&gt; SizedEntity <span class="kw">for </span>AwsS3BackedFile&lt;BM&gt;
 <span class="kw">where
-    </span>P: PartMap,
+    </span>BM: BlockMap,
 {
     <span class="kw">type </span>Position = usize;
 
     <span class="kw">type </span>Size = usize;
 
     <span class="kw">fn </span>size(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self</span>::Size {
-        <span class="self">self</span>.part_size_map.size()
+        <span class="self">self</span>.block_size_map.size()
     }
 }
 
@@ -581,20 +587,20 @@
     PositionOutOfBounds,
 }
 
-<span class="kw">impl</span>&lt;P&gt; AwsS3BackedFile&lt;P&gt;
+<span class="kw">impl</span>&lt;BM&gt; AwsS3BackedFile&lt;BM&gt;
 <span class="kw">where
-    </span>P: <span class="kw">for</span>&lt;<span class="lifetime">'a</span>&gt; Deserialize&lt;<span class="lifetime">'a</span>&gt; + PartMap,
+    </span>BM: <span class="kw">for</span>&lt;<span class="lifetime">'a</span>&gt; Deserialize&lt;<span class="lifetime">'a</span>&gt; + BlockMap,
 {
     <span class="kw">pub async fn </span>new(
         aws_s3_client: Client,
         bucket: String,
         object_prefix: String,
-        <span class="kw-2">mut </span>fallback_part_map: P,
+        <span class="kw-2">mut </span>fallback_block_map: BM,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, AwsS3Error&gt; {
         <span class="kw">let </span>get_object_output = aws_s3_client
             .get_object()
             .bucket(<span class="kw-2">&amp;</span>bucket)
-            .key(<span class="macro">format!</span>(<span class="string">"{}{}"</span>, <span class="kw-2">&amp;</span>object_prefix, PART_SIZE_MAP_KEY_SUFFIX))
+            .key(<span class="macro">format!</span>(<span class="string">"{}{}"</span>, <span class="kw-2">&amp;</span>object_prefix, BLOCK_SIZE_MAP_KEY_SUFFIX))
             .send()
             .<span class="kw">await
             </span>.map_err(|err| AwsS3Error::AwsSdkError(err.to_string()))<span class="question-mark">?</span>;
@@ -606,15 +612,15 @@
             </span>.map_err(|err| AwsS3Error::AwsSdkError(err.to_string()))<span class="question-mark">?
             </span>.into_bytes();
 
-        <span class="kw">let </span><span class="kw-2">mut </span>part_size_map = <span class="kw">if let </span><span class="prelude-val">Ok</span>(part_map) = serde_json::from_slice(<span class="kw-2">&amp;</span>bytes) {
-            part_map
+        <span class="kw">let </span><span class="kw-2">mut </span>block_size_map = <span class="kw">if let </span><span class="prelude-val">Ok</span>(block_map) = serde_json::from_slice(<span class="kw-2">&amp;</span>bytes) {
+            block_map
         } <span class="kw">else </span>{
-            fallback_part_map.clear();
-            fallback_part_map
+            fallback_block_map.clear();
+            fallback_block_map
         };
 
-        part_map_append_missing_parts_from_aws_s3(
-            <span class="kw-2">&amp;mut </span>part_size_map,
+        block_map_append_missing_blocks_from_aws_s3(
+            <span class="kw-2">&amp;mut </span>block_size_map,
             <span class="kw-2">&amp;</span>aws_s3_client,
             <span class="kw-2">&amp;</span>bucket,
             <span class="kw-2">&amp;</span>object_prefix,
@@ -625,7 +631,7 @@
             client: aws_s3_client,
             bucket,
             object_prefix,
-            part_size_map,
+            block_size_map,
         })
     }
 }
@@ -636,7 +642,7 @@
     }
 }
 
-<span class="kw">impl</span>&lt;P&gt; FallibleEntity <span class="kw">for </span>AwsS3BackedFile&lt;P&gt; {
+<span class="kw">impl</span>&lt;BM&gt; FallibleEntity <span class="kw">for </span>AwsS3BackedFile&lt;BM&gt; {
     <span class="kw">type </span>Error = AwsS3Error;
 }
 
@@ -699,9 +705,9 @@
         </span><span class="self">Self</span>: <span class="lifetime">'a</span>;
 }
 
-<span class="kw">impl</span>&lt;P&gt; StreamRead&lt;AwsS3ByteLender&gt; <span class="kw">for </span>AwsS3BackedFile&lt;P&gt;
+<span class="kw">impl</span>&lt;BM&gt; StreamRead&lt;AwsS3ByteLender&gt; <span class="kw">for </span>AwsS3BackedFile&lt;BM&gt;
 <span class="kw">where
-    </span>P: PartMap,
+    </span>BM: BlockMap,
 {
     <span class="kw">fn </span>read_stream_at&lt;<span class="lifetime">'a</span>&gt;(
         <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span><span class="self">self</span>,
@@ -711,42 +717,42 @@
     </span><span class="kw">where
         </span>AwsS3ByteLender: <span class="lifetime">'a</span>,
     {
-        <span class="kw">let </span>first_part_idx = <span class="self">self
-            </span>.part_size_map
-            .position_part_containing_offset(position)
-            .unwrap_or(<span class="self">self</span>.part_size_map.len());
+        <span class="kw">let </span>first_block_idx = <span class="self">self
+            </span>.block_size_map
+            .position_block_containing_offset(position)
+            .unwrap_or(<span class="self">self</span>.block_size_map.len());
 
-        <span class="kw">let </span>get_object_output_future_iter = (first_part_idx..<span class="self">self</span>.part_size_map.len())
+        <span class="kw">let </span>get_object_output_future_iter = (first_block_idx..<span class="self">self</span>.block_size_map.len())
             .scan(
                 (position, size),
                 |(read_position, bytes_left_to_read), idx| {
-                    <span class="kw">let </span>part = <span class="self">self</span>.part_size_map.get_part_at_idx(idx)<span class="question-mark">?</span>;
+                    <span class="kw">let </span>block = <span class="self">self</span>.block_size_map.get_block_at_idx(idx)<span class="question-mark">?</span>;
 
-                    <span class="kw">if </span><span class="kw-2">*</span>bytes_left_to_read &lt;= zero() || <span class="kw-2">*</span>read_position &gt;= part.end() {
+                    <span class="kw">if </span><span class="kw-2">*</span>bytes_left_to_read &lt;= zero() || <span class="kw-2">*</span>read_position &gt;= block.end() {
                         <span class="kw">return </span><span class="prelude-val">None</span>;
                     }
 
-                    <span class="kw">let </span>range_start = max(<span class="kw-2">*</span>read_position, part.offset);
+                    <span class="kw">let </span>range_start = max(<span class="kw-2">*</span>read_position, block.offset);
 
-                    <span class="kw">let </span>range_end = min(range_start + <span class="kw-2">*</span>bytes_left_to_read, part.end());
+                    <span class="kw">let </span>range_end = min(range_start + <span class="kw-2">*</span>bytes_left_to_read, block.end());
 
                     <span class="kw-2">*</span>bytes_left_to_read -= range_end - range_start;
 
-                    <span class="comment">// normalize range to [0, part.size)
-                    </span><span class="kw">let </span>range_start = range_start - part.offset;
-                    <span class="kw">let </span>range_end = range_end - part.offset;
+                    <span class="comment">// normalize range to [0, block.size)
+                    </span><span class="kw">let </span>range_start = range_start - block.offset;
+                    <span class="kw">let </span>range_end = range_end - block.offset;
 
                     <span class="prelude-val">Some</span>((idx, range_start, range_end - <span class="number">1</span>))
                 },
             )
-            .map(|(part_idx, range_start, range_end)| {
+            .map(|(block_idx, range_start, range_end)| {
                 GetObjectOutputFuture::new(
                     <span class="self">self</span>.client
                         .get_object()
                         .bucket(<span class="kw-2">&amp;</span><span class="self">self</span>.bucket)
                         .key(<span class="macro">format!</span>(
                             <span class="string">"{}_{}.{}"</span>,
-                            <span class="kw-2">&amp;</span><span class="self">self</span>.object_prefix, part_idx, PART_EXTENSION
+                            <span class="kw-2">&amp;</span><span class="self">self</span>.object_prefix, block_idx, BLOCK_EXTENSION
                         ))
                         .range(<span class="macro">format!</span>(<span class="string">"bytes={}-{}"</span>, range_start, range_end))
                         .send()
@@ -760,15 +766,17 @@
     }
 }
 
-<span class="kw">impl</span>&lt;P&gt; AsyncAppend <span class="kw">for </span>AwsS3BackedFile&lt;P&gt;
+<span class="kw">impl</span>&lt;BM&gt; AsyncAppend <span class="kw">for </span>AwsS3BackedFile&lt;BM&gt;
 <span class="kw">where
-    </span>P: PartMap,
+    </span>BM: BlockMap,
 {
     <span class="kw">async fn </span>append(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         bytes: Bytes,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;AppendInfo&lt;<span class="self">Self</span>::Position, <span class="self">Self</span>::Size&gt;, UnwrittenError&lt;<span class="self">Self</span>::Error&gt;&gt; {
-        <span class="kw">let </span>part = <span class="self">self</span>.part_size_map.append_part_with_part_size(bytes.len());
+        <span class="kw">let </span>block = <span class="self">self
+            </span>.block_size_map
+            .append_block_with_block_size(bytes.len());
 
         <span class="self">self</span>.client
             .put_object()
@@ -776,8 +784,8 @@
             .key(<span class="macro">format!</span>(
                 <span class="string">"{}_{}.{}"</span>,
                 <span class="kw-2">&amp;</span><span class="self">self</span>.object_prefix,
-                <span class="self">self</span>.part_size_map.len() - <span class="number">1</span>,
-                PART_EXTENSION
+                <span class="self">self</span>.block_size_map.len() - <span class="number">1</span>,
+                BLOCK_EXTENSION
             ))
             .body(bytes.clone().into())
             .send()
@@ -790,35 +798,39 @@
         <span class="prelude-val">Ok</span>(AppendInfo {
             bytes,
             location: AppendLocation {
-                write_position: part.offset,
-                write_len: part.size,
+                write_position: block.offset,
+                write_len: block.size,
             },
         })
     }
 }
 
-<span class="kw">impl</span>&lt;P&gt; AsyncTruncate <span class="kw">for </span>AwsS3BackedFile&lt;P&gt;
+<span class="kw">impl</span>&lt;BM&gt; AsyncTruncate <span class="kw">for </span>AwsS3BackedFile&lt;BM&gt;
 <span class="kw">where
-    </span>P: PartMap + Serialize,
+    </span>BM: BlockMap + Serialize,
 {
     <span class="kw">async fn </span>truncate(<span class="kw-2">&amp;mut </span><span class="self">self</span>, position: <span class="self">Self</span>::Position) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
-        <span class="kw">let </span>old_part_size_map_len = <span class="self">self</span>.part_size_map.len();
+        <span class="kw">let </span>old_block_size_map_len = <span class="self">self</span>.block_size_map.len();
 
-        <span class="kw">let </span>(last_part_idx, old_last_part_size, last_part_after_truncate) = <span class="self">self
-            </span>.part_size_map
+        <span class="kw">let </span>(last_block_idx, old_last_block_size, last_block_after_truncate) = <span class="self">self
+            </span>.block_size_map
             .truncate(position)
             .ok_or(AwsS3Error::PositionOutOfBounds)<span class="question-mark">?</span>;
 
-        <span class="kw">if </span>old_last_part_size &gt; last_part_after_truncate.size {
+        <span class="kw">if </span>old_last_block_size &gt; last_block_after_truncate.size {
             <span class="kw">let </span>get_object_output = <span class="self">self
                 </span>.client
                 .get_object()
                 .bucket(<span class="kw-2">&amp;</span><span class="self">self</span>.bucket)
                 .key(<span class="macro">format!</span>(
                     <span class="string">"{}_{}.{}"</span>,
-                    <span class="kw-2">&amp;</span><span class="self">self</span>.object_prefix, last_part_idx, PART_EXTENSION
+                    <span class="kw-2">&amp;</span><span class="self">self</span>.object_prefix, last_block_idx, BLOCK_EXTENSION
                 ))
-                .range(<span class="macro">format!</span>(<span class="string">"bytes={}-{}"</span>, <span class="number">0</span>, last_part_after_truncate.size - <span class="number">1</span>))
+                .range(<span class="macro">format!</span>(
+                    <span class="string">"bytes={}-{}"</span>,
+                    <span class="number">0</span>,
+                    last_block_after_truncate.size - <span class="number">1
+                </span>))
                 .send()
                 .<span class="kw">await
                 </span>.map_err(|err| AwsS3Error::AwsSdkError(err.to_string()))<span class="question-mark">?</span>;
@@ -828,7 +840,7 @@
                 .bucket(<span class="kw-2">&amp;</span><span class="self">self</span>.bucket)
                 .key(<span class="macro">format!</span>(
                     <span class="string">"{}_{}.{}"</span>,
-                    <span class="kw-2">&amp;</span><span class="self">self</span>.object_prefix, last_part_idx, PART_EXTENSION
+                    <span class="kw-2">&amp;</span><span class="self">self</span>.object_prefix, last_block_idx, BLOCK_EXTENSION
                 ))
                 .body(get_object_output.body)
                 .send()
@@ -836,13 +848,13 @@
                 </span>.map_err(|err| AwsS3Error::AwsSdkError(err.to_string()))<span class="question-mark">?</span>;
         }
 
-        <span class="kw">for </span>part_idx <span class="kw">in </span>last_part_idx + <span class="number">1</span>..old_part_size_map_len {
+        <span class="kw">for </span>block_idx <span class="kw">in </span>last_block_idx + <span class="number">1</span>..old_block_size_map_len {
             <span class="self">self</span>.client
                 .delete_object()
                 .bucket(<span class="kw-2">&amp;</span><span class="self">self</span>.bucket)
                 .key(<span class="macro">format!</span>(
                     <span class="string">"{}_{}.{}"</span>,
-                    <span class="kw-2">&amp;</span><span class="self">self</span>.object_prefix, part_idx, PART_EXTENSION
+                    <span class="kw-2">&amp;</span><span class="self">self</span>.object_prefix, block_idx, BLOCK_EXTENSION
                 ))
                 .send()
                 .<span class="kw">await
@@ -853,19 +865,19 @@
     }
 }
 
-<span class="kw">impl</span>&lt;P&gt; AsyncRemove <span class="kw">for </span>AwsS3BackedFile&lt;P&gt;
+<span class="kw">impl</span>&lt;BM&gt; AsyncRemove <span class="kw">for </span>AwsS3BackedFile&lt;BM&gt;
 <span class="kw">where
-    </span>P: PartMap,
+    </span>BM: BlockMap,
 {
     <span class="kw">async fn </span>remove(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
-        <span class="kw">let </span>keys = iter::once(<span class="macro">format!</span>(
-            <span class="string">"{}{}"</span>,
-            <span class="kw-2">&amp;</span><span class="self">self</span>.object_prefix, PART_SIZE_MAP_KEY_SUFFIX
-        ))
-        .chain(
-            (<span class="number">0</span>..<span class="self">self</span>.part_size_map.len())
-                .map(|part_idx| <span class="macro">format!</span>(<span class="string">"{}_{}.{}"</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.object_prefix, part_idx, PART_EXTENSION)),
-        );
+        <span class="kw">let </span>keys =
+            iter::once(<span class="macro">format!</span>(
+                <span class="string">"{}{}"</span>,
+                <span class="kw-2">&amp;</span><span class="self">self</span>.object_prefix, BLOCK_SIZE_MAP_KEY_SUFFIX
+            ))
+            .chain((<span class="number">0</span>..<span class="self">self</span>.block_size_map.len()).map(|block_idx| {
+                <span class="macro">format!</span>(<span class="string">"{}_{}.{}"</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.object_prefix, block_idx, BLOCK_EXTENSION)
+            }));
 
         <span class="kw">for </span>key <span class="kw">in </span>keys {
             <span class="self">self</span>.client
@@ -881,9 +893,9 @@
     }
 }
 
-<span class="kw">impl</span>&lt;P&gt; AwsS3BackedFile&lt;P&gt;
+<span class="kw">impl</span>&lt;BM&gt; AwsS3BackedFile&lt;BM&gt;
 <span class="kw">where
-    </span>P: Serialize,
+    </span>BM: Serialize,
 {
     <span class="kw">async fn </span>flush(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), AwsS3Error&gt; {
         <span class="self">self</span>.client
@@ -891,10 +903,10 @@
             .bucket(<span class="kw-2">&amp;</span><span class="self">self</span>.bucket)
             .key(<span class="macro">format!</span>(
                 <span class="string">"{}{}"</span>,
-                <span class="kw-2">&amp;</span><span class="self">self</span>.object_prefix, PART_SIZE_MAP_KEY_SUFFIX
+                <span class="kw-2">&amp;</span><span class="self">self</span>.object_prefix, BLOCK_SIZE_MAP_KEY_SUFFIX
             ))
             .body(
-                serde_json::to_vec(<span class="kw-2">&amp;</span><span class="self">self</span>.part_size_map)
+                serde_json::to_vec(<span class="kw-2">&amp;</span><span class="self">self</span>.block_size_map)
                     .map_err(AwsS3Error::SerializationError)<span class="question-mark">?
                     </span>.into(),
             )
@@ -906,9 +918,9 @@
     }
 }
 
-<span class="kw">impl</span>&lt;P&gt; AsyncClose <span class="kw">for </span>AwsS3BackedFile&lt;P&gt;
+<span class="kw">impl</span>&lt;BM&gt; AsyncClose <span class="kw">for </span>AwsS3BackedFile&lt;BM&gt;
 <span class="kw">where
-    </span>P: Serialize,
+    </span>BM: Serialize,
 {
     <span class="kw">async fn </span>close(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
         <span class="self">self</span>.flush().<span class="kw">await</span><span class="question-mark">?</span>;

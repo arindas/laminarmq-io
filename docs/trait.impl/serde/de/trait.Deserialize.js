@@ -1,3 +1,9 @@
-(function() {var implementors = {
-"laminarmq_io":[["impl&lt;'de&gt; <a class=\"trait\" href=\"https://docs.rs/serde/1.0.203/serde/de/trait.Deserialize.html\" title=\"trait serde::de::Deserialize\">Deserialize</a>&lt;'de&gt; for <a class=\"struct\" href=\"laminarmq_io/object_storage/struct.FixedPartSizeMap.html\" title=\"struct laminarmq_io::object_storage::FixedPartSizeMap\">FixedPartSizeMap</a>"],["impl&lt;'de&gt; <a class=\"trait\" href=\"https://docs.rs/serde/1.0.203/serde/de/trait.Deserialize.html\" title=\"trait serde::de::Deserialize\">Deserialize</a>&lt;'de&gt; for <a class=\"struct\" href=\"laminarmq_io/object_storage/struct.Part.html\" title=\"struct laminarmq_io::object_storage::Part\">Part</a>"]]
-};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
+(function() {
+    var implementors = Object.fromEntries([["laminarmq_io",[["impl&lt;'de&gt; <a class=\"trait\" href=\"https://docs.rs/serde/1.0.203/serde/de/trait.Deserialize.html\" title=\"trait serde::de::Deserialize\">Deserialize</a>&lt;'de&gt; for <a class=\"struct\" href=\"laminarmq_io/object_storage/struct.Block.html\" title=\"struct laminarmq_io::object_storage::Block\">Block</a>"],["impl&lt;'de&gt; <a class=\"trait\" href=\"https://docs.rs/serde/1.0.203/serde/de/trait.Deserialize.html\" title=\"trait serde::de::Deserialize\">Deserialize</a>&lt;'de&gt; for <a class=\"struct\" href=\"laminarmq_io/object_storage/struct.FixedBlockSizeMap.html\" title=\"struct laminarmq_io::object_storage::FixedBlockSizeMap\">FixedBlockSizeMap</a>"]]]]);
+    if (window.register_implementors) {
+        window.register_implementors(implementors);
+    } else {
+        window.pending_implementors = implementors;
+    }
+})()
+//{"start":57,"fragment_lengths":[690]}

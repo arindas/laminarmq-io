@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["BufAppenderError","BufReadByteBuf","BufReaderError","FlushState"],"struct":["BufAppender","BufByteLender","BufReader","BufReaderStreamReadStream","OnceBufReadResult"],"type":["FallibleBufReaderByteLender"]};

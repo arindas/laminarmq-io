@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["BufferedAppenderError","BufferedReadByteBuf","BufferedReaderError","FlushState"],"struct":["BufferedAppender","BufferedByteLender","BufferedReader","BufferedReaderStreamReadStream","OnceBufferedReadResult"],"type":["FallibleBufferedReaderByteLender"]};

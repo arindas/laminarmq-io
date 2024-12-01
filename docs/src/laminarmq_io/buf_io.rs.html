@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/buffered_io.rs`."><title>buffered_io.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../static.files/rustdoc-c5d6553a23f1e5a6.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="laminarmq_io" data-themes="" data-resource-suffix="" data-rustdoc-version="1.81.0 (eeb90cda1 2024-09-04)" data-channel="1.81.0" data-search-js="search-d234aafac6c221dd.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../static.files/storage-118b08c4c78b968e.js"></script><script defer src="../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-d2fab2bf619172d3.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-df360f571f6edeae.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/buf_io.rs`."><title>buf_io.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../static.files/rustdoc-492a78a4a87dcc01.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="laminarmq_io" data-themes="" data-resource-suffix="" data-rustdoc-version="1.82.0 (f6e511eec 2024-10-15)" data-channel="1.82.0" data-search-js="search-a99f1315e7cc5121.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../static.files/storage-118b08c4c78b968e.js"></script><script defer src="../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-921df33f47b8780c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-3b12f09e550e0385.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
 <a href="#4" id="4">4</a>
@@ -984,16 +984,6 @@
 <a href="#984" id="984">984</a>
 <a href="#985" id="985">985</a>
 <a href="#986" id="986">986</a>
-<a href="#987" id="987">987</a>
-<a href="#988" id="988">988</a>
-<a href="#989" id="989">989</a>
-<a href="#990" id="990">990</a>
-<a href="#991" id="991">991</a>
-<a href="#992" id="992">992</a>
-<a href="#993" id="993">993</a>
-<a href="#994" id="994">994</a>
-<a href="#995" id="995">995</a>
-<a href="#996" id="996">996</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     cmp::{max, min},
     marker::PhantomData,
@@ -1014,12 +1004,12 @@
     stream::{<span class="self">self</span>, Lender, Stream},
 };
 
-<span class="kw">pub enum </span>BufferedReadByteBuf&lt;T&gt; {
-    Buffered(Bytes),
+<span class="kw">pub enum </span>BufReadByteBuf&lt;T&gt; {
+    Buf(Bytes),
     Read(T),
 }
 
-<span class="kw">impl</span>&lt;T&gt; Deref <span class="kw">for </span>BufferedReadByteBuf&lt;T&gt;
+<span class="kw">impl</span>&lt;T&gt; Deref <span class="kw">for </span>BufReadByteBuf&lt;T&gt;
 <span class="kw">where
     </span>T: Deref&lt;Target = [u8]&gt;,
 {
@@ -1027,50 +1017,48 @@
 
     <span class="kw">fn </span>deref(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="self">Self</span>::Target {
         <span class="kw">match </span><span class="self">self </span>{
-            BufferedReadByteBuf::Buffered(buffered) =&gt; buffered.deref(),
-            BufferedReadByteBuf::Read(read) =&gt; read.deref(),
+            BufReadByteBuf::Buf(buf) =&gt; buf.deref(),
+            BufReadByteBuf::Read(read) =&gt; read.deref(),
         }
     }
 }
 
-<span class="kw">pub struct </span>BufferedByteLender&lt;BL&gt;(PhantomData&lt;BL&gt;);
+<span class="kw">pub struct </span>BufByteLender&lt;BL&gt;(PhantomData&lt;BL&gt;);
 
-<span class="kw">impl</span>&lt;BL&gt; ByteLender <span class="kw">for </span>BufferedByteLender&lt;BL&gt;
+<span class="kw">impl</span>&lt;BL&gt; ByteLender <span class="kw">for </span>BufByteLender&lt;BL&gt;
 <span class="kw">where
     </span>BL: ByteLender,
 {
-    <span class="kw">type </span>ByteBuf&lt;<span class="lifetime">'a</span>&gt; = BufferedReadByteBuf&lt;BL::ByteBuf&lt;<span class="lifetime">'a</span>&gt;&gt;
+    <span class="kw">type </span>ByteBuf&lt;<span class="lifetime">'a</span>&gt; = BufReadByteBuf&lt;BL::ByteBuf&lt;<span class="lifetime">'a</span>&gt;&gt;
     <span class="kw">where
         </span><span class="self">Self</span>: <span class="lifetime">'a</span>;
 }
 
-<span class="kw">pub struct </span>OnceBufferedReadResult&lt;E&gt;(<span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;Bytes, E&gt;&gt;);
+<span class="kw">pub struct </span>OnceBufReadResult&lt;E&gt;(<span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;Bytes, E&gt;&gt;);
 
-<span class="kw">impl</span>&lt;RBL, E&gt; Stream&lt;FallibleByteLender&lt;BufferedByteLender&lt;RBL&gt;, E&gt;&gt; <span class="kw">for </span>OnceBufferedReadResult&lt;E&gt;
+<span class="kw">impl</span>&lt;RBL, E&gt; Stream&lt;FallibleByteLender&lt;BufByteLender&lt;RBL&gt;, E&gt;&gt; <span class="kw">for </span>OnceBufReadResult&lt;E&gt;
 <span class="kw">where
     </span>RBL: ByteLender,
 {
     <span class="kw">async fn </span>next&lt;<span class="lifetime">'a</span>&gt;(
         <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span><span class="self">self</span>,
-    ) -&gt; <span class="prelude-ty">Option</span>&lt;&lt;FallibleByteLender&lt;BufferedByteLender&lt;RBL&gt;, E&gt; <span class="kw">as </span>Lender&gt;::Item&lt;<span class="lifetime">'a</span>&gt;&gt;
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;&lt;FallibleByteLender&lt;BufByteLender&lt;RBL&gt;, E&gt; <span class="kw">as </span>Lender&gt;::Item&lt;<span class="lifetime">'a</span>&gt;&gt;
     <span class="kw">where
-        </span>FallibleByteLender&lt;BufferedByteLender&lt;RBL&gt;, E&gt;: <span class="lifetime">'a</span>,
+        </span>FallibleByteLender&lt;BufByteLender&lt;RBL&gt;, E&gt;: <span class="lifetime">'a</span>,
     {
-        <span class="self">self</span>.<span class="number">0
-            </span>.take()
-            .map(|bytes| bytes.map(BufferedReadByteBuf::Buffered))
+        <span class="self">self</span>.<span class="number">0</span>.take().map(|bytes| bytes.map(BufReadByteBuf::Buf))
     }
 }
 
 <span class="attr">#[allow(unused)]
-</span><span class="kw">pub struct </span>BufferedAppender&lt;R, P, S&gt; {
+</span><span class="kw">pub struct </span>BufAppender&lt;R, P, S&gt; {
     inner: R,
     buffer: AnchoredBuffer&lt;P&gt;,
     flush_state: FlushState,
     size: S,
 }
 
-<span class="kw">pub enum </span>BufferedAppenderError&lt;E&gt; {
+<span class="kw">pub enum </span>BufAppenderError&lt;E&gt; {
     InnerError(E),
 
     BufferError(BufferError),
@@ -1084,20 +1072,20 @@
     IntegerConversionError,
 }
 
-<span class="kw">impl</span>&lt;E&gt; From&lt;IntegerConversionError&gt; <span class="kw">for </span>BufferedAppenderError&lt;E&gt; {
+<span class="kw">impl</span>&lt;E&gt; From&lt;IntegerConversionError&gt; <span class="kw">for </span>BufAppenderError&lt;E&gt; {
     <span class="kw">fn </span>from(<span class="kw">_</span>: IntegerConversionError) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>::IntegerConversionError
     }
 }
 
-<span class="kw">impl</span>&lt;R, P, S&gt; FallibleEntity <span class="kw">for </span>BufferedAppender&lt;R, P, S&gt;
+<span class="kw">impl</span>&lt;R, P, S&gt; FallibleEntity <span class="kw">for </span>BufAppender&lt;R, P, S&gt;
 <span class="kw">where
     </span>R: FallibleEntity,
 {
-    <span class="kw">type </span>Error = BufferedAppenderError&lt;R::Error&gt;;
+    <span class="kw">type </span>Error = BufAppenderError&lt;R::Error&gt;;
 }
 
-<span class="kw">impl</span>&lt;R&gt; SizedEntity <span class="kw">for </span>BufferedAppender&lt;R, R::Position, R::Size&gt;
+<span class="kw">impl</span>&lt;R&gt; SizedEntity <span class="kw">for </span>BufAppender&lt;R, R::Position, R::Size&gt;
 <span class="kw">where
     </span>R: SizedEntity,
 {
@@ -1110,7 +1098,7 @@
     }
 }
 
-<span class="kw">impl</span>&lt;R, BL&gt; AsyncRead&lt;BufferedByteLender&lt;BL&gt;&gt; <span class="kw">for </span>BufferedAppender&lt;R, R::Position, R::Size&gt;
+<span class="kw">impl</span>&lt;R, BL&gt; AsyncRead&lt;BufByteLender&lt;BL&gt;&gt; <span class="kw">for </span>BufAppender&lt;R, R::Position, R::Size&gt;
 <span class="kw">where
     </span>R: AsyncRead&lt;BL&gt;,
     BL: ByteLender,
@@ -1119,32 +1107,29 @@
         <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span><span class="self">self</span>,
         position: <span class="self">Self</span>::Position,
         size: <span class="self">Self</span>::Size,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;
-        ReadBytes&lt;&lt;BufferedByteLender&lt;BL&gt; <span class="kw">as </span>ByteLender&gt;::ByteBuf&lt;<span class="lifetime">'a</span>&gt;, <span class="self">Self</span>::Size&gt;,
-        <span class="self">Self</span>::Error,
-    &gt;
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;ReadBytes&lt;&lt;BufByteLender&lt;BL&gt; <span class="kw">as </span>ByteLender&gt;::ByteBuf&lt;<span class="lifetime">'a</span>&gt;, <span class="self">Self</span>::Size&gt;, <span class="self">Self</span>::Error&gt;
     <span class="kw">where
-        </span>BufferedByteLender&lt;BL&gt;: <span class="lifetime">'a</span>,
+        </span>BufByteLender&lt;BL&gt;: <span class="lifetime">'a</span>,
     {
         <span class="kw">match </span>position {
             pos <span class="kw">if </span>!<span class="self">self</span>.contains(pos) =&gt; <span class="prelude-val">Err</span>(<span class="self">Self</span>::Error::ReadBeyondWrittenArea),
             pos <span class="kw">if </span><span class="self">self</span>.buffer.contains_position(pos) =&gt; <span class="self">self
                 </span>.buffer
                 .read_at(pos, size)
-                .map(|x| x.map(BufferedReadByteBuf::Buffered))
+                .map(|x| x.map(BufReadByteBuf::Buf))
                 .map_err(<span class="self">Self</span>::Error::BufferError),
             pos <span class="kw">if </span><span class="self">self</span>.inner.contains(pos) =&gt; <span class="self">self
                 </span>.inner
                 .read_at(pos, size)
                 .<span class="kw">await
-                </span>.map(|x| x.map(BufferedReadByteBuf::Read))
+                </span>.map(|x| x.map(BufReadByteBuf::Read))
                 .map_err(<span class="self">Self</span>::Error::InnerError),
             <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(<span class="self">Self</span>::Error::ReadGapEncountered),
         }
     }
 }
 
-<span class="kw">impl</span>&lt;R&gt; AsyncBufRead <span class="kw">for </span>BufferedAppender&lt;R, R::Position, R::Size&gt;
+<span class="kw">impl</span>&lt;R&gt; AsyncBufRead <span class="kw">for </span>BufAppender&lt;R, R::Position, R::Size&gt;
 <span class="kw">where
     </span>R: AsyncBufRead,
 {
@@ -1207,7 +1192,7 @@
     Clean,
 }
 
-<span class="kw">impl</span>&lt;R&gt; AsyncFlush <span class="kw">for </span>BufferedAppender&lt;R, R::Position, R::Size&gt;
+<span class="kw">impl</span>&lt;R&gt; AsyncFlush <span class="kw">for </span>BufAppender&lt;R, R::Position, R::Size&gt;
 <span class="kw">where
     </span>R: AsyncFlush + AsyncAppend,
 {
@@ -1274,7 +1259,7 @@
     }
 }
 
-<span class="kw">impl</span>&lt;R&gt; AsyncAppend <span class="kw">for </span>BufferedAppender&lt;R, R::Position, R::Size&gt;
+<span class="kw">impl</span>&lt;R&gt; AsyncAppend <span class="kw">for </span>BufAppender&lt;R, R::Position, R::Size&gt;
 <span class="kw">where
     </span>R: AsyncAppend + AsyncFlush,
 {
@@ -1378,7 +1363,7 @@
     }
 }
 
-<span class="kw">impl</span>&lt;R&gt; AsyncClose <span class="kw">for </span>BufferedAppender&lt;R, R::Position, R::Size&gt;
+<span class="kw">impl</span>&lt;R&gt; AsyncClose <span class="kw">for </span>BufAppender&lt;R, R::Position, R::Size&gt;
 <span class="kw">where
     </span>R: AsyncAppend + AsyncFlush + AsyncClose,
 {
@@ -1389,7 +1374,7 @@
     }
 }
 
-<span class="kw">impl</span>&lt;R, P, S&gt; AsyncRemove <span class="kw">for </span>BufferedAppender&lt;R, P, S&gt;
+<span class="kw">impl</span>&lt;R, P, S&gt; AsyncRemove <span class="kw">for </span>BufAppender&lt;R, P, S&gt;
 <span class="kw">where
     </span>R: AsyncRemove,
 {
@@ -1398,7 +1383,7 @@
     }
 }
 
-<span class="kw">impl</span>&lt;R&gt; AsyncTruncate <span class="kw">for </span>BufferedAppender&lt;R, R::Position, R::Size&gt;
+<span class="kw">impl</span>&lt;R&gt; AsyncTruncate <span class="kw">for </span>BufAppender&lt;R, R::Position, R::Size&gt;
 <span class="kw">where
     </span>R: AsyncTruncate,
 {
@@ -1423,7 +1408,7 @@
     }
 }
 
-<span class="kw">impl</span>&lt;R, RBL&gt; StreamRead&lt;BufferedByteLender&lt;RBL&gt;&gt; <span class="kw">for </span>BufferedAppender&lt;R, R::Position, R::Size&gt;
+<span class="kw">impl</span>&lt;R, RBL&gt; StreamRead&lt;BufByteLender&lt;RBL&gt;&gt; <span class="kw">for </span>BufAppender&lt;R, R::Position, R::Size&gt;
 <span class="kw">where
     </span>R: StreamRead&lt;RBL&gt;,
     R::Error: <span class="lifetime">'static</span>,
@@ -1433,9 +1418,9 @@
         <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span><span class="self">self</span>,
         position: <span class="self">Self</span>::Position,
         size: <span class="self">Self</span>::Size,
-    ) -&gt; <span class="kw">impl </span>Stream&lt;FallibleByteLender&lt;BufferedByteLender&lt;RBL&gt;, <span class="self">Self</span>::Error&gt;&gt; + <span class="lifetime">'a
+    ) -&gt; <span class="kw">impl </span>Stream&lt;FallibleByteLender&lt;BufByteLender&lt;RBL&gt;, <span class="self">Self</span>::Error&gt;&gt; + <span class="lifetime">'a
     </span><span class="kw">where
-        </span>BufferedByteLender&lt;R::Error&gt;: <span class="lifetime">'a</span>,
+        </span>BufByteLender&lt;R::Error&gt;: <span class="lifetime">'a</span>,
     {
         <span class="kw">let </span>buffer_anchor_position = <span class="self">self</span>.buffer.anchor_position();
 
@@ -1454,7 +1439,7 @@
             .checked_sub(<span class="kw-2">&amp;</span>buffer_read_start)
             .unwrap_or(zero());
 
-        <span class="kw">let </span>buffered_read_necessary = expected_buffer_read_size &gt; zero();
+        <span class="kw">let </span>buf_read_necessary = expected_buffer_read_size &gt; zero();
 
         stream::chain(
             stream::latch(
@@ -1464,12 +1449,12 @@
                     |<span class="kw">_</span>: <span class="kw-2">&amp;</span>(), stream_item_bytebuf_result| {
                         stream_item_bytebuf_result
                             .map_err(<span class="self">Self</span>::Error::InnerError)
-                            .map(BufferedReadByteBuf::Read)
+                            .map(BufReadByteBuf::Read)
                     },
                 ),
                 inner_read_necessary,
             ),
-            OnceBufferedReadResult(buffered_read_necessary.then(|| {
+            OnceBufReadResult(buf_read_necessary.then(|| {
                 <span class="self">self</span>.buffer
                     .read_at(buffer_read_start, expected_buffer_read_size)
                     .map(
@@ -1485,33 +1470,33 @@
 }
 
 <span class="attr">#[allow(unused)]
-</span><span class="kw">pub struct </span>BufferedReader&lt;R, P, S&gt; {
+</span><span class="kw">pub struct </span>BufReader&lt;R, P, S&gt; {
     inner: R,
     buffer: AnchoredBuffer&lt;P&gt;,
     size: S,
 }
 
-<span class="kw">pub enum </span>BufferedReaderError&lt;E&gt; {
+<span class="kw">pub enum </span>BufReaderError&lt;E&gt; {
     InnerError(E),
     BufferError(BufferError),
     ReadBeyondWrittenArea,
     IntegerConversionError,
 }
 
-<span class="kw">impl</span>&lt;E&gt; From&lt;IntegerConversionError&gt; <span class="kw">for </span>BufferedReaderError&lt;E&gt; {
+<span class="kw">impl</span>&lt;E&gt; From&lt;IntegerConversionError&gt; <span class="kw">for </span>BufReaderError&lt;E&gt; {
     <span class="kw">fn </span>from(<span class="kw">_</span>: IntegerConversionError) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>::IntegerConversionError
     }
 }
 
-<span class="kw">impl</span>&lt;R, P, S&gt; FallibleEntity <span class="kw">for </span>BufferedReader&lt;R, P, S&gt;
+<span class="kw">impl</span>&lt;R, P, S&gt; FallibleEntity <span class="kw">for </span>BufReader&lt;R, P, S&gt;
 <span class="kw">where
     </span>R: FallibleEntity,
 {
-    <span class="kw">type </span>Error = BufferedReaderError&lt;R::Error&gt;;
+    <span class="kw">type </span>Error = BufReaderError&lt;R::Error&gt;;
 }
 
-<span class="kw">impl</span>&lt;R&gt; SizedEntity <span class="kw">for </span>BufferedReader&lt;R, R::Position, R::Size&gt;
+<span class="kw">impl</span>&lt;R&gt; SizedEntity <span class="kw">for </span>BufReader&lt;R, R::Position, R::Size&gt;
 <span class="kw">where
     </span>R: SizedEntity,
 {
@@ -1524,7 +1509,7 @@
     }
 }
 
-<span class="kw">impl</span>&lt;R&gt; AsyncRead&lt;OwnedByteLender&lt;Bytes&gt;&gt; <span class="kw">for </span>BufferedReader&lt;R, R::Position, R::Size&gt;
+<span class="kw">impl</span>&lt;R&gt; AsyncRead&lt;OwnedByteLender&lt;Bytes&gt;&gt; <span class="kw">for </span>BufReader&lt;R, R::Position, R::Size&gt;
 <span class="kw">where
     </span>R: AsyncBufRead,
 {
@@ -1603,7 +1588,7 @@
     }
 }
 
-<span class="kw">impl</span>&lt;R, BL&gt; AsyncRead&lt;BufferedByteLender&lt;BL&gt;&gt; <span class="kw">for </span>BufferedReader&lt;R, R::Position, R::Size&gt;
+<span class="kw">impl</span>&lt;R, BL&gt; AsyncRead&lt;BufByteLender&lt;BL&gt;&gt; <span class="kw">for </span>BufReader&lt;R, R::Position, R::Size&gt;
 <span class="kw">where
     </span>R: AsyncRead&lt;BL&gt;,
     BL: ByteLender,
@@ -1612,12 +1597,9 @@
         <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span><span class="self">self</span>,
         position: <span class="self">Self</span>::Position,
         size: <span class="self">Self</span>::Size,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;
-        ReadBytes&lt;&lt;BufferedByteLender&lt;BL&gt; <span class="kw">as </span>ByteLender&gt;::ByteBuf&lt;<span class="lifetime">'a</span>&gt;, <span class="self">Self</span>::Size&gt;,
-        <span class="self">Self</span>::Error,
-    &gt;
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;ReadBytes&lt;&lt;BufByteLender&lt;BL&gt; <span class="kw">as </span>ByteLender&gt;::ByteBuf&lt;<span class="lifetime">'a</span>&gt;, <span class="self">Self</span>::Size&gt;, <span class="self">Self</span>::Error&gt;
     <span class="kw">where
-        </span>BufferedByteLender&lt;BL&gt;: <span class="lifetime">'a</span>,
+        </span>BufByteLender&lt;BL&gt;: <span class="lifetime">'a</span>,
     {
         <span class="kw">struct </span>Reanchor&lt;P&gt;(P);
 
@@ -1686,13 +1668,13 @@
             <span class="prelude-val">Ok</span>(ReadSource::Buffer) =&gt; <span class="self">self
                 </span>.buffer
                 .read_at(position, size)
-                .map(|x| x.map(BufferedReadByteBuf::Buffered))
+                .map(|x| x.map(BufReadByteBuf::Buf))
                 .map_err(<span class="self">Self</span>::Error::BufferError),
             <span class="prelude-val">Ok</span>(ReadSource::Inner) =&gt; <span class="self">self
                 </span>.inner
                 .read_at(position, size)
                 .<span class="kw">await
-                </span>.map(|x| x.map(BufferedReadByteBuf::Read))
+                </span>.map(|x| x.map(BufReadByteBuf::Read))
                 .map_err(<span class="self">Self</span>::Error::InnerError),
             <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err),
         }
@@ -1700,7 +1682,7 @@
 }
 
 <span class="attr">#[allow(unused)]
-</span><span class="kw">enum </span>BufferedReaderStreamReadState&lt;P, S&gt; {
+</span><span class="kw">enum </span>BufReaderStreamReadState&lt;P, S&gt; {
     ConsumeBuffer {
         buffer_read_position: P,
         buffer_read_size: S,
@@ -1722,8 +1704,8 @@
 }
 
 <span class="attr">#[allow(unused)]
-</span><span class="kw">pub struct </span>BufferedReaderStreamReadStream&lt;<span class="lifetime">'a</span>, R, RS, P, S&gt; {
-    state: BufferedReaderStreamReadState&lt;P, S&gt;,
+</span><span class="kw">pub struct </span>BufReaderStreamReadStream&lt;<span class="lifetime">'a</span>, R, RS, P, S&gt; {
+    state: BufReaderStreamReadState&lt;P, S&gt;,
 
     inner_stream_read_stream: RS,
 
@@ -1734,11 +1716,11 @@
     _phantom_data: PhantomData&lt;R&gt;,
 }
 
-<span class="kw">pub type </span>FallibleBufferedReaderByteLender&lt;RBL, E&gt; =
-    FallibleByteLender&lt;BufferedByteLender&lt;RBL&gt;, BufferedReaderError&lt;E&gt;&gt;;
+<span class="kw">pub type </span>FallibleBufReaderByteLender&lt;RBL, E&gt; =
+    FallibleByteLender&lt;BufByteLender&lt;RBL&gt;, BufReaderError&lt;E&gt;&gt;;
 
-<span class="kw">impl</span>&lt;<span class="lifetime">'x</span>, R, RBL, RS&gt; Stream&lt;FallibleBufferedReaderByteLender&lt;RBL, R::Error&gt;&gt;
-    <span class="kw">for </span>BufferedReaderStreamReadStream&lt;<span class="lifetime">'x</span>, R, RS, R::Position, R::Size&gt;
+<span class="kw">impl</span>&lt;<span class="lifetime">'x</span>, R, RBL, RS&gt; Stream&lt;FallibleBufReaderByteLender&lt;RBL, R::Error&gt;&gt;
+    <span class="kw">for </span>BufReaderStreamReadStream&lt;<span class="lifetime">'x</span>, R, RS, R::Position, R::Size&gt;
 <span class="kw">where
     </span>R: StreamRead&lt;RBL&gt;,
     R::Error: <span class="lifetime">'static</span>,
@@ -1747,12 +1729,12 @@
 {
     <span class="kw">async fn </span>next&lt;<span class="lifetime">'a</span>&gt;(
         <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span><span class="self">self</span>,
-    ) -&gt; <span class="prelude-ty">Option</span>&lt;&lt;FallibleBufferedReaderByteLender&lt;RBL, R::Error&gt; <span class="kw">as </span>Lender&gt;::Item&lt;<span class="lifetime">'a</span>&gt;&gt;
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;&lt;FallibleBufReaderByteLender&lt;RBL, R::Error&gt; <span class="kw">as </span>Lender&gt;::Item&lt;<span class="lifetime">'a</span>&gt;&gt;
     <span class="kw">where
-        </span>FallibleBufferedReaderByteLender&lt;RBL, R::Error&gt;: <span class="lifetime">'a</span>,
+        </span>FallibleBufReaderByteLender&lt;RBL, R::Error&gt;: <span class="lifetime">'a</span>,
     {
         <span class="kw">let </span>(item, next_state) = <span class="kw">match </span><span class="self">self</span>.state {
-            BufferedReaderStreamReadState::ConsumeBuffer {
+            BufReaderStreamReadState::ConsumeBuffer {
                 buffer_read_position,
                 buffer_read_size,
                 remainder,
@@ -1760,30 +1742,28 @@
                 <span class="prelude-val">Some</span>(
                     <span class="self">self</span>.buffer
                         .read_at(buffer_read_position, buffer_read_size)
-                        .map_err(BufferedReaderError::BufferError)
+                        .map_err(BufReaderError::BufferError)
                         .map(
                             |ReadBytes {
                                  read_bytes,
                                  read_len: <span class="kw">_</span>,
-                             }| {
-                                BufferedReadByteBuf::Buffered(read_bytes)
-                            },
+                             }| { BufReadByteBuf::Buf(read_bytes) },
                         ),
                 ),
-                BufferedReaderStreamReadState::FillBuffer {
+                BufReaderStreamReadState::FillBuffer {
                     inner_read_position: buffer_read_position + buffer_read_size.into(),
                     remainder,
                 },
             ),
 
-            BufferedReaderStreamReadState::FillBuffer {
+            BufReaderStreamReadState::FillBuffer {
                 inner_read_position,
                 remainder,
             } <span class="kw">if </span>remainder == zero() || inner_read_position &gt;= <span class="self">self</span>.inner_size.into() =&gt; {
-                (<span class="prelude-val">None</span>, BufferedReaderStreamReadState::Done)
+                (<span class="prelude-val">None</span>, BufReaderStreamReadState::Done)
             }
 
-            BufferedReaderStreamReadState::FillBuffer {
+            BufReaderStreamReadState::FillBuffer {
                 inner_read_position,
                 remainder,
             } =&gt; <span class="kw">match </span><span class="self">self</span>.inner_stream_read_stream.next().<span class="kw">await </span>{
@@ -1797,15 +1777,15 @@
 
                     <span class="kw">match </span>(new_anchor_position, remainder) {
                         (<span class="prelude-val">Some</span>(anchor_position), <span class="prelude-val">Some</span>(rem)) =&gt; (
-                            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(BufferedReadByteBuf::Read(read_bytes))),
-                            BufferedReaderStreamReadState::ReanchorBuffer {
+                            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(BufReadByteBuf::Read(read_bytes))),
+                            BufReaderStreamReadState::ReanchorBuffer {
                                 anchor_position,
                                 remainder: rem,
                             },
                         ),
                         <span class="kw">_ </span>=&gt; (
-                            <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(BufferedReaderError::IntegerConversionError)),
-                            BufferedReaderStreamReadState::Done,
+                            <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(BufReaderError::IntegerConversionError)),
+                            BufReaderStreamReadState::Done,
                         ),
                     }
                 }
@@ -1832,48 +1812,48 @@
 
                     <span class="kw">match </span>(new_inner_read_position, remainder, buffer_append_result) {
                         (<span class="kw">_</span>, <span class="kw">_</span>, <span class="prelude-val">Err</span>(err)) =&gt; (
-                            <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(BufferedReaderError::BufferError(err))),
-                            BufferedReaderStreamReadState::Done,
+                            <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(BufReaderError::BufferError(err))),
+                            BufReaderStreamReadState::Done,
                         ),
                         (<span class="prelude-val">Some</span>(pos), <span class="prelude-val">Some</span>(rem), <span class="prelude-val">Ok</span>(())) =&gt; (
-                            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(BufferedReadByteBuf::Read(read_bytes))),
-                            BufferedReaderStreamReadState::FillBuffer {
+                            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(BufReadByteBuf::Read(read_bytes))),
+                            BufReaderStreamReadState::FillBuffer {
                                 inner_read_position: pos,
                                 remainder: rem,
                             },
                         ),
 
                         <span class="kw">_ </span>=&gt; (
-                            <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(BufferedReaderError::IntegerConversionError)),
-                            BufferedReaderStreamReadState::Done,
+                            <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(BufReaderError::IntegerConversionError)),
+                            BufReaderStreamReadState::Done,
                         ),
                     }
                 }
 
                 <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(err)) =&gt; (
-                    <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(BufferedReaderError::InnerError(err))),
-                    BufferedReaderStreamReadState::Done,
+                    <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(BufReaderError::InnerError(err))),
+                    BufReaderStreamReadState::Done,
                 ),
 
-                <span class="prelude-val">None </span>=&gt; (<span class="prelude-val">None</span>, BufferedReaderStreamReadState::Done),
+                <span class="prelude-val">None </span>=&gt; (<span class="prelude-val">None</span>, BufReaderStreamReadState::Done),
             },
 
-            BufferedReaderStreamReadState::ReanchorBuffer {
+            BufReaderStreamReadState::ReanchorBuffer {
                 anchor_position,
                 remainder,
             } =&gt; {
                 <span class="self">self</span>.buffer.re_anchor(anchor_position);
 
                 (
-                    <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(BufferedReadByteBuf::Buffered(Bytes::new()))),
-                    BufferedReaderStreamReadState::FillBuffer {
+                    <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(BufReadByteBuf::Buf(Bytes::new()))),
+                    BufReaderStreamReadState::FillBuffer {
                         inner_read_position: anchor_position,
                         remainder,
                     },
                 )
             }
 
-            BufferedReaderStreamReadState::Done =&gt; (<span class="prelude-val">None</span>, BufferedReaderStreamReadState::Done),
+            BufReaderStreamReadState::Done =&gt; (<span class="prelude-val">None</span>, BufReaderStreamReadState::Done),
         };
 
         <span class="self">self</span>.state = next_state;
@@ -1882,7 +1862,7 @@
     }
 }
 
-<span class="kw">impl</span>&lt;R, RBL&gt; StreamRead&lt;BufferedByteLender&lt;RBL&gt;&gt; <span class="kw">for </span>BufferedReader&lt;R, R::Position, R::Size&gt;
+<span class="kw">impl</span>&lt;R, RBL&gt; StreamRead&lt;BufByteLender&lt;RBL&gt;&gt; <span class="kw">for </span>BufReader&lt;R, R::Position, R::Size&gt;
 <span class="kw">where
     </span>R: StreamRead&lt;RBL&gt;,
     R::Error: <span class="lifetime">'static</span>,
@@ -1892,9 +1872,9 @@
         <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span><span class="self">self</span>,
         position: <span class="self">Self</span>::Position,
         size: <span class="self">Self</span>::Size,
-    ) -&gt; <span class="kw">impl </span>Stream&lt;FallibleByteLender&lt;BufferedByteLender&lt;RBL&gt;, <span class="self">Self</span>::Error&gt;&gt; + <span class="lifetime">'a
+    ) -&gt; <span class="kw">impl </span>Stream&lt;FallibleByteLender&lt;BufByteLender&lt;RBL&gt;, <span class="self">Self</span>::Error&gt;&gt; + <span class="lifetime">'a
     </span><span class="kw">where
-        </span>BufferedByteLender&lt;RBL&gt;: <span class="lifetime">'a</span>,
+        </span>BufByteLender&lt;RBL&gt;: <span class="lifetime">'a</span>,
     {
         <span class="kw">let </span>inner_size = <span class="self">self</span>.inner.size();
 
@@ -1907,7 +1887,7 @@
                 <span class="kw">let </span>remainder = size.checked_sub(<span class="kw-2">&amp;</span>avail_to_read_from_pos).unwrap_or(zero());
 
                 (
-                    BufferedReaderStreamReadState::ConsumeBuffer {
+                    BufReaderStreamReadState::ConsumeBuffer {
                         buffer_read_position: position,
                         buffer_read_size: avail_to_read_from_pos,
                         remainder,
@@ -1918,7 +1898,7 @@
             }
 
             pos =&gt; (
-                BufferedReaderStreamReadState::FillBuffer {
+                BufReaderStreamReadState::FillBuffer {
                     inner_read_position: pos,
                     remainder: size,
                 },
@@ -1927,7 +1907,7 @@
             ),
         };
 
-        BufferedReaderStreamReadStream {
+        BufReaderStreamReadStream {
             state: initial_state,
             inner_stream_read_stream: <span class="self">self</span>.inner.read_stream_at(inner_read_pos, inner_read_size),
             buffer: <span class="kw-2">&amp;mut </span><span class="self">self</span>.buffer,
@@ -1937,7 +1917,7 @@
     }
 }
 
-<span class="kw">impl</span>&lt;R&gt; AsyncTruncate <span class="kw">for </span>BufferedReader&lt;R, R::Position, R::Size&gt;
+<span class="kw">impl</span>&lt;R&gt; AsyncTruncate <span class="kw">for </span>BufReader&lt;R, R::Position, R::Size&gt;
 <span class="kw">where
     </span>R: AsyncTruncate,
 {
@@ -1963,7 +1943,7 @@
     }
 }
 
-<span class="kw">impl</span>&lt;R, P, S&gt; AsyncRemove <span class="kw">for </span>BufferedReader&lt;R, P, S&gt;
+<span class="kw">impl</span>&lt;R, P, S&gt; AsyncRemove <span class="kw">for </span>BufReader&lt;R, P, S&gt;
 <span class="kw">where
     </span>R: AsyncRemove,
 {
@@ -1972,7 +1952,7 @@
     }
 }
 
-<span class="kw">impl</span>&lt;R, P, S&gt; AsyncFlush <span class="kw">for </span>BufferedReader&lt;R, P, S&gt;
+<span class="kw">impl</span>&lt;R, P, S&gt; AsyncFlush <span class="kw">for </span>BufReader&lt;R, P, S&gt;
 <span class="kw">where
     </span>R: AsyncFlush,
 {
@@ -1981,7 +1961,7 @@
     }
 }
 
-<span class="kw">impl</span>&lt;R, P, S&gt; AsyncClose <span class="kw">for </span>BufferedReader&lt;R, P, S&gt;
+<span class="kw">impl</span>&lt;R, P, S&gt; AsyncClose <span class="kw">for </span>BufReader&lt;R, P, S&gt;
 <span class="kw">where
     </span>R: AsyncClose + AsyncFlush,
 {

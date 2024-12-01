@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/object_storage/mod.rs`."><title>mod.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-c5d6553a23f1e5a6.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="laminarmq_io" data-themes="" data-resource-suffix="" data-rustdoc-version="1.81.0 (eeb90cda1 2024-09-04)" data-channel="1.81.0" data-search-js="search-d234aafac6c221dd.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../../static.files/storage-118b08c4c78b968e.js"></script><script defer src="../../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-d2fab2bf619172d3.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-df360f571f6edeae.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/object_storage/mod.rs`."><title>mod.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-492a78a4a87dcc01.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="laminarmq_io" data-themes="" data-resource-suffix="" data-rustdoc-version="1.82.0 (f6e511eec 2024-10-15)" data-channel="1.82.0" data-search-js="search-a99f1315e7cc5121.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../../static.files/storage-118b08c4c78b968e.js"></script><script defer src="../../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-921df33f47b8780c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-3b12f09e550e0385.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
 <a href="#4" id="4">4</a>
@@ -161,17 +161,17 @@
 <span class="attr">#[cfg(feature = <span class="string">"aws_s3"</span>)]
 </span><span class="kw">pub mod </span>aws_s3;
 
-<span class="kw">pub trait </span>PartMap {
-    <span class="kw">fn </span>position_part_containing_offset(<span class="kw-2">&amp;</span><span class="self">self</span>, offset: usize) -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt;;
+<span class="kw">pub trait </span>BlockMap {
+    <span class="kw">fn </span>position_block_containing_offset(<span class="kw-2">&amp;</span><span class="self">self</span>, offset: usize) -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt;;
 
-    <span class="kw">fn </span>get_part_at_idx(<span class="kw-2">&amp;</span><span class="self">self</span>, part_idx: usize) -&gt; <span class="prelude-ty">Option</span>&lt;Part&gt;;
+    <span class="kw">fn </span>get_block_at_idx(<span class="kw-2">&amp;</span><span class="self">self</span>, block_idx: usize) -&gt; <span class="prelude-ty">Option</span>&lt;Block&gt;;
 
-    <span class="kw">fn </span>get_part_containing_offset(<span class="kw-2">&amp;</span><span class="self">self</span>, offset: usize) -&gt; <span class="prelude-ty">Option</span>&lt;Part&gt; {
-        <span class="self">self</span>.position_part_containing_offset(offset)
-            .and_then(|idx| <span class="self">self</span>.get_part_at_idx(idx))
+    <span class="kw">fn </span>get_block_containing_offset(<span class="kw-2">&amp;</span><span class="self">self</span>, offset: usize) -&gt; <span class="prelude-ty">Option</span>&lt;Block&gt; {
+        <span class="self">self</span>.position_block_containing_offset(offset)
+            .and_then(|idx| <span class="self">self</span>.get_block_at_idx(idx))
     }
 
-    <span class="kw">fn </span>append_part_with_part_size(<span class="kw-2">&amp;mut </span><span class="self">self</span>, part_size: usize) -&gt; Part;
+    <span class="kw">fn </span>append_block_with_block_size(<span class="kw-2">&amp;mut </span><span class="self">self</span>, block_size: usize) -&gt; Block;
 
     <span class="kw">fn </span>len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize;
 
@@ -179,10 +179,10 @@
         <span class="self">self</span>.len() == <span class="number">0
     </span>}
 
-    <span class="kw">fn </span>truncate(<span class="kw-2">&amp;mut </span><span class="self">self</span>, offset: usize) -&gt; <span class="prelude-ty">Option</span>&lt;(usize, usize, Part)&gt;;
+    <span class="kw">fn </span>truncate(<span class="kw-2">&amp;mut </span><span class="self">self</span>, offset: usize) -&gt; <span class="prelude-ty">Option</span>&lt;(usize, usize, Block)&gt;;
 
     <span class="kw">fn </span>size(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="self">self</span>.get_part_at_idx(<span class="self">self</span>.len() - <span class="number">1</span>)
+        <span class="self">self</span>.get_block_at_idx(<span class="self">self</span>.len() - <span class="number">1</span>)
             .map(|p| p.end())
             .unwrap_or(<span class="number">0</span>)
     }
@@ -191,21 +191,21 @@
 }
 
 <span class="attr">#[derive(Clone, Copy, Serialize, Deserialize)]
-</span><span class="kw">pub struct </span>Part {
+</span><span class="kw">pub struct </span>Block {
     <span class="kw">pub </span>offset: usize,
     <span class="kw">pub </span>size: usize,
 }
 
-<span class="kw">impl </span>Part {
+<span class="kw">impl </span>Block {
     <span class="kw">pub fn </span>end(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="self">self</span>.offset + <span class="self">self</span>.size
     }
 }
 
-<span class="kw">impl </span>PartMap <span class="kw">for </span>Vec&lt;Part&gt; {
-    <span class="kw">fn </span>position_part_containing_offset(<span class="kw-2">&amp;</span><span class="self">self</span>, offset: usize) -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt; {
-        <span class="self">self</span>.binary_search_by(|part| <span class="kw">match </span>part.offset.cmp(<span class="kw-2">&amp;</span>offset) {
-            Ordering::Less <span class="kw">if </span>offset &lt; part.end() =&gt; Ordering::Equal,
+<span class="kw">impl </span>BlockMap <span class="kw">for </span>Vec&lt;Block&gt; {
+    <span class="kw">fn </span>position_block_containing_offset(<span class="kw-2">&amp;</span><span class="self">self</span>, offset: usize) -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt; {
+        <span class="self">self</span>.binary_search_by(|block| <span class="kw">match </span>block.offset.cmp(<span class="kw-2">&amp;</span>offset) {
+            Ordering::Less <span class="kw">if </span>offset &lt; block.end() =&gt; Ordering::Equal,
             Ordering::Less =&gt; Ordering::Less,
             Ordering::Equal =&gt; Ordering::Equal,
             Ordering::Greater =&gt; Ordering::Greater,
@@ -213,41 +213,41 @@
         .ok()
     }
 
-    <span class="kw">fn </span>get_part_at_idx(<span class="kw-2">&amp;</span><span class="self">self</span>, part_idx: usize) -&gt; <span class="prelude-ty">Option</span>&lt;Part&gt; {
-        <span class="self">self</span>.get(part_idx).cloned()
+    <span class="kw">fn </span>get_block_at_idx(<span class="kw-2">&amp;</span><span class="self">self</span>, block_idx: usize) -&gt; <span class="prelude-ty">Option</span>&lt;Block&gt; {
+        <span class="self">self</span>.get(block_idx).cloned()
     }
 
-    <span class="kw">fn </span>append_part_with_part_size(<span class="kw-2">&amp;mut </span><span class="self">self</span>, part_size: usize) -&gt; Part {
+    <span class="kw">fn </span>append_block_with_block_size(<span class="kw-2">&amp;mut </span><span class="self">self</span>, block_size: usize) -&gt; Block {
         <span class="kw">let </span>offset = <span class="self">self</span>.last().map_or(<span class="number">0</span>, |x| x.end());
 
-        <span class="kw">let </span>part = Part {
+        <span class="kw">let </span>block = Block {
             offset,
-            size: part_size,
+            size: block_size,
         };
 
-        <span class="self">self</span>.push(part);
+        <span class="self">self</span>.push(block);
 
-        part
+        block
     }
 
     <span class="kw">fn </span>len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="self">self</span>.len()
     }
 
-    <span class="kw">fn </span>truncate(<span class="kw-2">&amp;mut </span><span class="self">self</span>, offset: usize) -&gt; <span class="prelude-ty">Option</span>&lt;(usize, usize, Part)&gt; {
-        <span class="kw">let </span>idx = <span class="self">self</span>.position_part_containing_offset(offset)<span class="question-mark">?</span>;
+    <span class="kw">fn </span>truncate(<span class="kw-2">&amp;mut </span><span class="self">self</span>, offset: usize) -&gt; <span class="prelude-ty">Option</span>&lt;(usize, usize, Block)&gt; {
+        <span class="kw">let </span>idx = <span class="self">self</span>.position_block_containing_offset(offset)<span class="question-mark">?</span>;
 
-        <span class="kw">let </span><span class="kw-2">mut </span>truncated_part = <span class="self">self</span>.get_part_at_idx(idx)<span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>truncated_block = <span class="self">self</span>.get_block_at_idx(idx)<span class="question-mark">?</span>;
 
         <span class="kw">let _ </span>= <span class="self">self</span>.split_off(idx);
 
-        <span class="kw">let </span>old_part_size = truncated_part.size;
+        <span class="kw">let </span>old_block_size = truncated_block.size;
 
-        truncated_part.size -= truncated_part.end() - offset;
+        truncated_block.size -= truncated_block.end() - offset;
 
-        <span class="self">self</span>.push(truncated_part);
+        <span class="self">self</span>.push(truncated_block);
 
-        <span class="prelude-val">Some</span>((idx, old_part_size, truncated_part))
+        <span class="prelude-val">Some</span>((idx, old_block_size, truncated_block))
     }
 
     <span class="kw">fn </span>clear(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
@@ -256,56 +256,56 @@
 }
 
 <span class="attr">#[derive(Clone, Copy, Serialize, Deserialize)]
-</span><span class="kw">pub struct </span>FixedPartSizeMap {
-    part_size: usize,
+</span><span class="kw">pub struct </span>FixedBlockSizeMap {
+    block_size: usize,
     len: usize,
 }
 
-<span class="kw">impl </span>PartMap <span class="kw">for </span>FixedPartSizeMap {
-    <span class="kw">fn </span>position_part_containing_offset(<span class="kw-2">&amp;</span><span class="self">self</span>, offset: usize) -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt; {
-        <span class="kw">let </span>part_idx = offset / <span class="self">self</span>.part_size;
+<span class="kw">impl </span>BlockMap <span class="kw">for </span>FixedBlockSizeMap {
+    <span class="kw">fn </span>position_block_containing_offset(<span class="kw-2">&amp;</span><span class="self">self</span>, offset: usize) -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt; {
+        <span class="kw">let </span>block_idx = offset / <span class="self">self</span>.block_size;
 
-        (part_idx &lt; <span class="self">self</span>.len).then_some(part_idx)
+        (block_idx &lt; <span class="self">self</span>.len).then_some(block_idx)
     }
 
-    <span class="kw">fn </span>get_part_at_idx(<span class="kw-2">&amp;</span><span class="self">self</span>, part_idx: usize) -&gt; <span class="prelude-ty">Option</span>&lt;Part&gt; {
-        (part_idx &lt; <span class="self">self</span>.len).then_some(Part {
-            offset: part_idx * <span class="self">self</span>.part_size,
-            size: <span class="self">self</span>.part_size,
+    <span class="kw">fn </span>get_block_at_idx(<span class="kw-2">&amp;</span><span class="self">self</span>, block_idx: usize) -&gt; <span class="prelude-ty">Option</span>&lt;Block&gt; {
+        (block_idx &lt; <span class="self">self</span>.len).then_some(Block {
+            offset: block_idx * <span class="self">self</span>.block_size,
+            size: <span class="self">self</span>.block_size,
         })
     }
 
-    <span class="kw">fn </span>get_part_containing_offset(<span class="kw-2">&amp;</span><span class="self">self</span>, offset: usize) -&gt; <span class="prelude-ty">Option</span>&lt;Part&gt; {
-        <span class="kw">let </span>part_idx = offset / <span class="self">self</span>.part_size;
+    <span class="kw">fn </span>get_block_containing_offset(<span class="kw-2">&amp;</span><span class="self">self</span>, offset: usize) -&gt; <span class="prelude-ty">Option</span>&lt;Block&gt; {
+        <span class="kw">let </span>block_idx = offset / <span class="self">self</span>.block_size;
 
-        (part_idx &lt; <span class="self">self</span>.len).then_some(Part {
-            offset: part_idx * <span class="self">self</span>.part_size,
-            size: <span class="self">self</span>.part_size,
+        (block_idx &lt; <span class="self">self</span>.len).then_some(Block {
+            offset: block_idx * <span class="self">self</span>.block_size,
+            size: <span class="self">self</span>.block_size,
         })
     }
 
-    <span class="kw">fn </span>append_part_with_part_size(<span class="kw-2">&amp;mut </span><span class="self">self</span>, <span class="kw">_</span>: usize) -&gt; Part {
-        <span class="kw">let </span>part = Part {
-            offset: <span class="self">self</span>.len * <span class="self">self</span>.part_size,
-            size: <span class="self">self</span>.part_size,
+    <span class="kw">fn </span>append_block_with_block_size(<span class="kw-2">&amp;mut </span><span class="self">self</span>, <span class="kw">_</span>: usize) -&gt; Block {
+        <span class="kw">let </span>block = Block {
+            offset: <span class="self">self</span>.len * <span class="self">self</span>.block_size,
+            size: <span class="self">self</span>.block_size,
         };
 
         <span class="self">self</span>.len += <span class="number">1</span>;
 
-        part
+        block
     }
 
     <span class="kw">fn </span>len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="self">self</span>.len
     }
 
-    <span class="kw">fn </span>truncate(<span class="kw-2">&amp;mut </span><span class="self">self</span>, offset: usize) -&gt; <span class="prelude-ty">Option</span>&lt;(usize, usize, Part)&gt; {
-        <span class="kw">let </span>idx = <span class="self">self</span>.position_part_containing_offset(offset)<span class="question-mark">?</span>;
+    <span class="kw">fn </span>truncate(<span class="kw-2">&amp;mut </span><span class="self">self</span>, offset: usize) -&gt; <span class="prelude-ty">Option</span>&lt;(usize, usize, Block)&gt; {
+        <span class="kw">let </span>idx = <span class="self">self</span>.position_block_containing_offset(offset)<span class="question-mark">?</span>;
 
         <span class="self">self</span>.len = idx;
 
-        <span class="self">self</span>.get_part_at_idx(<span class="self">self</span>.len() - <span class="number">1</span>)
-            .map(|x| (<span class="self">self</span>.len() - <span class="number">1</span>, <span class="self">self</span>.part_size, x))
+        <span class="self">self</span>.get_block_at_idx(<span class="self">self</span>.len() - <span class="number">1</span>)
+            .map(|x| (<span class="self">self</span>.len() - <span class="number">1</span>, <span class="self">self</span>.block_size, x))
     }
 
     <span class="kw">fn </span>clear(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
