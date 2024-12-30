@@ -67,15 +67,15 @@ impl AsyncWrite for BufferedFile {
 
         let write_len: Self::Size = self
             .inner
-            .write_at(bytes.clone().into(), write_position)
+            .write_at(bytes.slice(..).into(), write_position)
             .await
             .map_err(|err| Unwritten {
-                unwritten: bytes.clone(),
+                unwritten: bytes.slice(..),
                 err: BufferedFileError::InnerError(err),
             })?
             .try_into()
             .map_err(|_| Unwritten {
-                unwritten: bytes.clone(),
+                unwritten: bytes.slice(..),
                 err: BufferedFileError::IntegerConversionError,
             })?;
 
@@ -208,12 +208,12 @@ impl AsyncWrite for DmaFile {
             .write_at(buffer, write_position)
             .await
             .map_err(|err| Unwritten {
-                unwritten: bytes.clone(),
+                unwritten: bytes.slice(..),
                 err: DmaFileError::InnerError(err),
             })?
             .try_into()
             .map_err(|_| Unwritten {
-                unwritten: bytes.clone(),
+                unwritten: bytes.slice(..),
                 err: DmaFileError::IntegerConversionError,
             })?;
 

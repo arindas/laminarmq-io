@@ -293,12 +293,12 @@ where
         struct ReanchorBufferAfterFlushAndInnerWrite;
 
         let buffer_end_position = self.buffer.end_position().map_err(|err| Unwritten {
-            unwritten: bytes.clone(),
+            unwritten: bytes.slice(..),
             err: Self::Error::BufferError(err),
         })?;
 
         let bytes_len = R::Size::from_usize(bytes.len()).ok_or_else(|| Unwritten {
-            unwritten: bytes.clone(),
+            unwritten: bytes.slice(..),
             err: Self::Error::IntegerConversionError,
         })?;
 
@@ -314,7 +314,7 @@ where
             Action::Flush { dest_after_flush } => (
                 dest_after_flush,
                 self.flush().await.map_err(|err| Unwritten {
-                    unwritten: bytes.clone(),
+                    unwritten: bytes.slice(..),
                     err,
                 }),
             ),
@@ -325,7 +325,7 @@ where
                     self.buffer
                         .get_append_slice_mut()
                         .map_err(|err| Unwritten {
-                            unwritten: bytes.clone(),
+                            unwritten: bytes.slice(..),
                             err: Self::Error::BufferError(err),
                         })?;
 
@@ -334,7 +334,7 @@ where
                 self.buffer
                     .unsplit_append_slice(buffer_append_slice_mut, bytes.len())
                     .map_err(|err| Unwritten {
-                        unwritten: bytes.clone(),
+                        unwritten: bytes.slice(..),
                         err: Self::Error::BufferError(err),
                     })?;
 

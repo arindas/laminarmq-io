@@ -321,12 +321,12 @@ where
                 self.block_size_map.len() - 1,
                 BLOCK_EXTENSION
             ))
-            .body(bytes.clone().into())
+            .body(bytes.slice(..).into())
             .send()
             .await
             .map_err(|err| Unwritten {
                 err: AwsS3Error::AwsSdkError(err.to_string()),
-                unwritten: bytes.clone(),
+                unwritten: bytes.slice(..),
             })?;
 
         Ok(WriteOutcome {

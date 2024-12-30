@@ -112,18 +112,18 @@ impl<K, const FLUSH_ON_APPEND: bool> AsyncWrite for TokioFile<K, FLUSH_ON_APPEND
             .write(&bytes)
             .await
             .map_err(|err| Unwritten {
-                unwritten: bytes.clone(),
+                unwritten: bytes.slice(..),
                 err: TokioFileError::IoError(err),
             })?
             .to_u64()
             .ok_or_else(|| Unwritten {
-                unwritten: bytes.clone(),
+                unwritten: bytes.slice(..),
                 err: Self::Error::IntegerConversionError,
             })?;
 
         if FLUSH_ON_APPEND {
             self.inner.flush().await.map_err(|err| Unwritten {
-                unwritten: bytes.clone(),
+                unwritten: bytes.slice(..),
                 err: TokioFileError::IoError(err),
             })?;
         }

@@ -159,73 +159,70 @@ pub trait AsyncWrite: SizedEntity + FallibleEntity {
     }
 }
 
-pub enum StreamAppendError<E, XE> {
-    AppendOverflow,
+pub enum StreamWriteError<E, XE> {
+    WriteOverflow,
     StreamReadError(XE),
     InnerError(E),
 }
 
-pub trait StreamAppend: SizedEntity + FallibleEntity {
-    fn append_stream<XE, X>(
+pub trait StreamWrite: SizedEntity + FallibleEntity {
+    fn write_stream<XE, X>(
         &mut self,
         stream: &mut X,
-        opts: StreamAppendOpts<Self::Size>,
-    ) -> impl Future<Output = StreamAppendResult<Self::Position, Self::Size, Self::Error, XE>>
+        opts: StreamWriteOpts<Self::Size>,
+    ) -> impl Future<Output = StreamWriteResult<Self::Position, Self::Size, Self::Error, XE>>
     where
         X: Stream<OwnedLender<Result<Bytes, XE>>>,
         X: Unpin;
 }
 
-pub type StreamAppendResult<P, S, E, XE> =
-    Result<WriteLocation<P, S>, Unwritten<StreamAppendError<E, XE>>>;
+pub type StreamWriteResult<P, S, E, XE> =
+    Result<WriteLocation<P, S>, Unwritten<StreamWriteError<E, XE>>>;
 
 #[derive(Clone, Copy, Debug)]
-pub struct StreamAppendOpts<S> {
-    pub append_threshold: Option<S>,
+pub struct StreamWriteOpts<S> {
+    pub write_threshold: Option<S>,
     pub rollback: bool,
 }
 
-impl<A> StreamAppend for A
+impl<A> StreamWrite for A
 where
     A: AsyncWrite + AsyncTruncate,
 {
-    async fn append_stream<XE, X>(
+    async fn write_stream<XE, X>(
         &mut self,
         stream: &mut X,
-        opts: StreamAppendOpts<Self::Size>,
-    ) -> StreamAppendResult<Self::Position, Self::Size, Self::Error, XE>
+        opts: StreamWriteOpts<Self::Size>,
+    ) -> StreamWriteResult<Self::Position, Self::Size, Self::Error, XE>
     where
         X: Stream<OwnedLender<Result<Bytes, XE>>> + Unpin,
     {
-        let (mut bytes_written, write_position) = (zero::<Self::Size>(), self.size().into());
-
-        let append_threshold = opts.append_threshold.and_then(|x| x.to_usize());
+        let (mut bytes_written, write_position) = (zero(), self.size().into());
 
         while let Some(buf) = stream.next().await {
-            match match match (buf, append_threshold) {
-                (Ok(buf), Some(thresh))
-                    if bytes_written.to_usize().ok_or_else(|| Unwritten {
-                        err: StreamAppendError::InnerError(IntegerConversionError.into()),
-                        unwritten: buf.clone(),
-                    })? + buf.len()
-                        <= thresh =>
-                {
+            let buf_len_opt = buf
+                .as_ref()
+                .ok()
+                .and_then(|x| Self::Size::from_usize(x.len()));
+
+            match match match (buf, buf_len_opt, opts.write_threshold) {
+                (Ok(buf), Some(buf_len), Some(thresh)) if bytes_written + buf_len <= thresh => {
                     Ok(buf)
                 }
-                (Ok(buf), Some(_)) => Err(Unwritten {
-                    err: StreamAppendError::AppendOverflow,
+                (Ok(buf), _, Some(_)) => Err(Unwritten {
+                    err: StreamWriteError::WriteOverflow,
                     unwritten: buf,
                 }),
-                (Ok(buf), None) => Ok(buf),
-                (Err(err), _) => Err(Unwritten {
-                    err: StreamAppendError::StreamReadError(err),
+                (Ok(buf), _, None) => Ok(buf),
+                (Err(err), _, _) => Err(Unwritten {
+                    err: StreamWriteError::StreamReadError(err),
                     unwritten: Bytes::new(),
                 }),
             } {
                 Ok(buf) => self
                     .write_all(buf)
                     .await
-                    .map_err(|x| x.map_err(StreamAppendError::InnerError)),
+                    .map_err(|x| x.map_err(StreamWriteError::InnerError)),
                 Err(error) => Err(error),
             } {
                 Ok(WriteOutcome {
@@ -241,8 +238,8 @@ where
                     self.truncate(write_position)
                         .await
                         .map_err(|err| Unwritten {
-                            err: StreamAppendError::InnerError(err),
-                            unwritten: unwritten.clone(),
+                            err: StreamWriteError::InnerError(err),
+                            unwritten: unwritten.slice(..),
                         })?;
 
                     return Err(Unwritten { unwritten, err });
