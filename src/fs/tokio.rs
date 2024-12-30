@@ -11,7 +11,7 @@ use tokio::{
 
 use crate::io_types::{
     AsyncBufRead, AsyncClose, AsyncFlush, AsyncRemove, AsyncTruncate, AsyncWrite, FallibleEntity,
-    IntegerConversionError, ReadBytes, SizedEntity, UnreadError, Unwritten, WriteOutcome,
+    IntegerConversionError, ReadBytes, SizedEntity, Unread, Unwritten, WriteOutcome,
 };
 use crate::WriteLocation;
 
@@ -146,11 +146,11 @@ impl AsyncBufRead for TokioFile<Seek, true> {
         &mut self,
         position: Self::Position,
         mut buffer: BytesMut,
-    ) -> Result<ReadBytes<BytesMut, Self::Size>, UnreadError<Self::Error>> {
+    ) -> Result<ReadBytes<BytesMut, Self::Size>, Unread<Self::Error>> {
         self.inner
             .seek(io::SeekFrom::Start(position))
             .await
-            .map_err(|err| UnreadError {
+            .map_err(|err| Unread {
                 unread: buffer.clone(),
                 err: Self::Error::IoError(err),
             })?;
@@ -159,12 +159,12 @@ impl AsyncBufRead for TokioFile<Seek, true> {
             .inner
             .read(&mut buffer)
             .await
-            .map_err(|err| UnreadError {
+            .map_err(|err| Unread {
                 unread: buffer.clone(),
                 err: Self::Error::IoError(err),
             })?
             .to_u64()
-            .ok_or_else(|| UnreadError {
+            .ok_or_else(|| Unread {
                 unread: buffer.clone(),
                 err: Self::Error::IntegerConversionError,
             })?;
@@ -172,7 +172,7 @@ impl AsyncBufRead for TokioFile<Seek, true> {
         self.inner
             .seek(io::SeekFrom::Start(self.size))
             .await
-            .map_err(|err| UnreadError {
+            .map_err(|err| Unread {
                 unread: buffer.clone(),
                 err: Self::Error::IoError(err),
             })?;
@@ -190,24 +190,24 @@ impl AsyncBufRead for TokioFile<RandomRead, true> {
         &mut self,
         position: Self::Position,
         buffer: BytesMut,
-    ) -> Result<ReadBytes<BytesMut, Self::Size>, UnreadError<Self::Error>> {
+    ) -> Result<ReadBytes<BytesMut, Self::Size>, Unread<Self::Error>> {
         let reader = self
             .inner
             .try_clone()
             .await
-            .map_err(|err| UnreadError {
+            .map_err(|err| Unread {
                 unread: buffer.clone(),
                 err: Self::Error::IoError(err),
             })?
             .try_into_std()
-            .map_err(|_| UnreadError {
+            .map_err(|_| Unread {
                 unread: buffer.clone(),
                 err: Self::Error::IntoStdFileConversionFailed,
             })?;
 
         let read_len_usize = buffer.len();
 
-        let read_len = read_len_usize.to_u64().ok_or_else(|| UnreadError {
+        let read_len = read_len_usize.to_u64().ok_or_else(|| Unread {
             unread: buffer.clone(),
             err: Self::Error::IntegerConversionError,
         })?;
@@ -229,11 +229,11 @@ impl AsyncBufRead for TokioFile<RandomRead, true> {
                 read_bytes: read_buffer,
                 read_len,
             }),
-            Ok(Err((err, unread))) => Err(UnreadError {
+            Ok(Err((err, unread))) => Err(Unread {
                 unread,
                 err: Self::Error::IoError(err),
             }),
-            Err(err) => Err(UnreadError {
+            Err(err) => Err(Unread {
                 unread: Bytes::from(vec![0u8; read_len_usize]).into(),
                 err: Self::Error::JoinError(err),
             }),

@@ -1,19 +1,14 @@
-#[allow(unused)]
 use std::{
-    cmp::{max, min},
+    cmp::min,
     convert::Into,
     future::Future,
     marker::PhantomData,
-    ops::{Add, AddAssign, Bound, Deref, DerefMut, Not, RangeBounds, Sub, SubAssign},
+    ops::{Add, AddAssign, Deref, DerefMut, Sub, SubAssign},
 };
 
 use bytes::{Bytes, BytesMut};
-#[allow(unused)]
-use futures::TryFutureExt;
-#[allow(unused)]
 use num::{zero, CheckedSub, FromPrimitive, ToPrimitive, Unsigned, Zero};
 
-#[allow(unused)]
 use crate::stream::{Lender, OwnedLender, Stream};
 
 pub trait Quantifier:
@@ -267,6 +262,16 @@ where
     }
 }
 
+pub type VectoredWriteResult<P, S, E> =
+    Result<WriteOutcome<Vec<Bytes>, P, S>, Unwritten<Vec<Bytes>, E>>;
+
+pub trait VectoredWrite: SizedEntity + FallibleEntity {
+    fn write_vectored(
+        &mut self,
+        bufs: Vec<Bytes>,
+    ) -> impl Future<Output = VectoredWriteResult<Self::Position, Self::Size, Self::Error>>;
+}
+
 pub trait AsyncFlush: FallibleEntity {
     fn flush(&mut self) -> impl Future<Output = Result<(), Self::Error>>;
 }
@@ -292,7 +297,7 @@ pub struct ReadBytesLen<T> {
     pub read_len: T,
 }
 
-pub struct UnreadError<E> {
+pub struct Unread<E> {
     pub unread: BytesMut,
     pub err: E,
 }
@@ -302,20 +307,19 @@ pub trait AsyncBufRead: SizedEntity + FallibleEntity {
         &mut self,
         position: Self::Position,
         buffer: BytesMut,
-    ) -> impl Future<Output = Result<ReadBytes<BytesMut, Self::Size>, UnreadError<Self::Error>>>;
+    ) -> impl Future<Output = Result<ReadBytes<BytesMut, Self::Size>, Unread<Self::Error>>>;
 
     fn read_at_buf_sized(
         &mut self,
         position: Self::Position,
         size: Self::Size,
         mut buffer: BytesMut,
-    ) -> impl Future<Output = Result<ReadBytes<BytesMut, Self::Size>, UnreadError<Self::Error>>>
-    {
+    ) -> impl Future<Output = Result<ReadBytes<BytesMut, Self::Size>, Unread<Self::Error>>> {
         async move {
             let size = size.to_usize().map(|size| min(size, buffer.len()));
 
             if size.is_none() {
-                return Err(UnreadError {
+                return Err(Unread {
                     unread: buffer,
                     err: IntegerConversionError.into(),
                 });
@@ -338,13 +342,21 @@ pub trait AsyncBufRead: SizedEntity + FallibleEntity {
                         read_len,
                     })
                 }
-                Err(UnreadError { mut unread, err }) => {
+                Err(Unread { mut unread, err }) => {
                     unread.unsplit(remainder);
-                    Err(UnreadError { unread, err })
+                    Err(Unread { unread, err })
                 }
             }
         }
     }
+}
+
+pub trait VectoredRead: SizedEntity + FallibleEntity {
+    fn read_vectored_at(
+        &mut self,
+        position: Self::Position,
+        bufs: Vec<BytesMut>,
+    ) -> impl Future<Output = Result<ReadBytes<Vec<BytesMut>, Self::Size>, Unread<Self::Error>>>;
 }
 
 pub trait ByteLender {

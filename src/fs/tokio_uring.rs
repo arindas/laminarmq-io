@@ -6,7 +6,7 @@ use std::{
 use crate::{
     io_types::{
         AsyncBufRead, AsyncClose, AsyncFlush, AsyncRemove, AsyncWrite, FallibleEntity,
-        IntegerConversionError, ReadBytes, SizedEntity, UnreadError, Unwritten, WriteOutcome,
+        IntegerConversionError, ReadBytes, SizedEntity, Unread, Unwritten, WriteOutcome,
     },
     WriteLocation,
 };
@@ -107,7 +107,7 @@ impl AsyncBufRead for TokioUringFile {
         &mut self,
         position: Self::Position,
         buffer: BytesMut,
-    ) -> Result<ReadBytes<BytesMut, Self::Size>, UnreadError<Self::Error>> {
+    ) -> Result<ReadBytes<BytesMut, Self::Size>, Unread<Self::Error>> {
         let (result, buffer) = self.inner.read_at(buffer, position).await;
 
         match result {
@@ -115,7 +115,7 @@ impl AsyncBufRead for TokioUringFile {
                 read_bytes: buffer,
                 read_len: read_len as u64,
             }),
-            Err(err) => Err(UnreadError {
+            Err(err) => Err(Unread {
                 unread: buffer,
                 err: Self::Error::IoError(err),
             }),

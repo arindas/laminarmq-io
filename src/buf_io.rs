@@ -12,7 +12,7 @@ use crate::{
     io_types::{
         AsyncBufRead, AsyncClose, AsyncFlush, AsyncRead, AsyncRemove, AsyncTruncate, AsyncWrite,
         ByteLender, FallibleByteLender, FallibleEntity, IntegerConversionError, OwnedByteLender,
-        ReadBytes, SizedEntity, StreamRead, UnreadError, Unwritten, WriteLocation, WriteOutcome,
+        ReadBytes, SizedEntity, StreamRead, Unread, Unwritten, WriteLocation, WriteOutcome,
     },
     stream::{self, Lender, Stream},
 };
@@ -150,7 +150,7 @@ where
         &mut self,
         position: Self::Position,
         mut buffer: BytesMut,
-    ) -> Result<ReadBytes<BytesMut, Self::Size>, UnreadError<Self::Error>> {
+    ) -> Result<ReadBytes<BytesMut, Self::Size>, Unread<Self::Error>> {
         let provided_buffer_len =
             R::Size::from_usize(buffer.len()).ok_or(Self::Error::IntegerConversionError);
 
@@ -179,7 +179,7 @@ where
                         buffer = read_bytes;
                         Ok(read_len)
                     }
-                    Err(UnreadError { unread, err }) => {
+                    Err(Unread { unread, err }) => {
                         buffer = unread;
                         Err(Self::Error::InnerError(err))
                     }
@@ -191,7 +191,7 @@ where
                 read_bytes: buffer,
                 read_len,
             }),
-            Err(err) => Err(UnreadError {
+            Err(err) => Err(Unread {
                 unread: buffer,
                 err,
             }),
@@ -581,7 +581,7 @@ where
                             read_bytes,
                             read_len,
                         }) => (read_bytes, read_len.to_usize().unwrap_or(0)),
-                        Err(UnreadError { unread, err: _ }) => (unread, 0),
+                        Err(Unread { unread, err: _ }) => (unread, 0),
                     };
 
                 self.buffer
