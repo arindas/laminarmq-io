@@ -3,12 +3,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{
-    io_types::{
-        AsyncBufRead, AsyncClose, AsyncFlush, AsyncRemove, AsyncWrite, FallibleEntity,
-        IntegerConversionError, ReadBytes, SizedEntity, Unread, Unwritten, WriteOutcome,
-    },
-    WriteLocation,
+use crate::io_types::{
+    AsyncBufRead, AsyncClose, AsyncFlush, AsyncRemove, AsyncWrite, FallibleEntity,
+    IntegerConversionError, ReadBytes, SizedEntity, Unread, Unwritten, VectoredRead, VectoredWrite,
+    VectoredWriteResult, WriteLocation, WriteOutcome,
 };
 
 use bytes::{Bytes, BytesMut};
@@ -87,13 +85,38 @@ impl AsyncWrite for TokioUringFile {
             Ok(write_len) => {
                 self.size += write_len as u64;
                 Ok(WriteOutcome {
-                    written: bytes,
                     location: WriteLocation {
                         position: write_position,
                         len: write_len as u64,
                     },
+                    written: bytes,
                 })
             }
+            Err(err) => Err(Unwritten {
+                unwritten: bytes,
+                err: Self::Error::IoError(err),
+            }),
+        }
+    }
+}
+
+impl VectoredWrite for TokioUringFile {
+    async fn write_vectored(
+        &mut self,
+        bufs: Vec<Bytes>,
+    ) -> VectoredWriteResult<Self::Position, Self::Size, Self::Error> {
+        let write_position = self.size;
+
+        let (res, bytes) = self.inner.writev_at(bufs, write_position).await;
+
+        match res {
+            Ok(write_len) => Ok(WriteOutcome {
+                location: WriteLocation {
+                    position: write_position,
+                    len: write_len as u64,
+                },
+                written: bytes,
+            }),
             Err(err) => Err(Unwritten {
                 unwritten: bytes,
                 err: Self::Error::IoError(err),
@@ -107,7 +130,7 @@ impl AsyncBufRead for TokioUringFile {
         &mut self,
         position: Self::Position,
         buffer: BytesMut,
-    ) -> Result<ReadBytes<BytesMut, Self::Size>, Unread<Self::Error>> {
+    ) -> Result<ReadBytes<BytesMut, Self::Size>, Unread<BytesMut, Self::Error>> {
         let (result, buffer) = self.inner.read_at(buffer, position).await;
 
         match result {
@@ -117,6 +140,27 @@ impl AsyncBufRead for TokioUringFile {
             }),
             Err(err) => Err(Unread {
                 unread: buffer,
+                err: Self::Error::IoError(err),
+            }),
+        }
+    }
+}
+
+impl VectoredRead for TokioUringFile {
+    async fn read_vectored_at(
+        &mut self,
+        position: Self::Position,
+        bufs: Vec<BytesMut>,
+    ) -> Result<ReadBytes<Vec<BytesMut>, Self::Size>, Unread<Vec<BytesMut>, Self::Error>> {
+        let (result, bufs) = self.inner.readv_at(bufs, position).await;
+
+        match result {
+            Ok(read_len) => Ok(ReadBytes {
+                read_bytes: bufs,
+                read_len: read_len as u64,
+            }),
+            Err(err) => Err(Unread {
+                unread: bufs,
                 err: Self::Error::IoError(err),
             }),
         }

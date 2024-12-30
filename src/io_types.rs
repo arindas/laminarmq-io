@@ -297,8 +297,8 @@ pub struct ReadBytesLen<T> {
     pub read_len: T,
 }
 
-pub struct Unread<E> {
-    pub unread: BytesMut,
+pub struct Unread<T, E> {
+    pub unread: T,
     pub err: E,
 }
 
@@ -307,14 +307,15 @@ pub trait AsyncBufRead: SizedEntity + FallibleEntity {
         &mut self,
         position: Self::Position,
         buffer: BytesMut,
-    ) -> impl Future<Output = Result<ReadBytes<BytesMut, Self::Size>, Unread<Self::Error>>>;
+    ) -> impl Future<Output = Result<ReadBytes<BytesMut, Self::Size>, Unread<BytesMut, Self::Error>>>;
 
     fn read_at_buf_sized(
         &mut self,
         position: Self::Position,
         size: Self::Size,
         mut buffer: BytesMut,
-    ) -> impl Future<Output = Result<ReadBytes<BytesMut, Self::Size>, Unread<Self::Error>>> {
+    ) -> impl Future<Output = Result<ReadBytes<BytesMut, Self::Size>, Unread<BytesMut, Self::Error>>>
+    {
         async move {
             let size = size.to_usize().map(|size| min(size, buffer.len()));
 
@@ -356,7 +357,9 @@ pub trait VectoredRead: SizedEntity + FallibleEntity {
         &mut self,
         position: Self::Position,
         bufs: Vec<BytesMut>,
-    ) -> impl Future<Output = Result<ReadBytes<Vec<BytesMut>, Self::Size>, Unread<Self::Error>>>;
+    ) -> impl Future<
+        Output = Result<ReadBytes<Vec<BytesMut>, Self::Size>, Unread<Vec<BytesMut>, Self::Error>>,
+    >;
 }
 
 pub trait ByteLender {

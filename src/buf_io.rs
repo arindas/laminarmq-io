@@ -150,7 +150,7 @@ where
         &mut self,
         position: Self::Position,
         mut buffer: BytesMut,
-    ) -> Result<ReadBytes<BytesMut, Self::Size>, Unread<Self::Error>> {
+    ) -> Result<ReadBytes<BytesMut, Self::Size>, Unread<BytesMut, Self::Error>> {
         let provided_buffer_len =
             R::Size::from_usize(buffer.len()).ok_or(Self::Error::IntegerConversionError);
 

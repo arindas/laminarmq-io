@@ -146,7 +146,7 @@ impl AsyncBufRead for TokioFile<Seek, true> {
         &mut self,
         position: Self::Position,
         mut buffer: BytesMut,
-    ) -> Result<ReadBytes<BytesMut, Self::Size>, Unread<Self::Error>> {
+    ) -> Result<ReadBytes<BytesMut, Self::Size>, Unread<BytesMut, Self::Error>> {
         self.inner
             .seek(io::SeekFrom::Start(position))
             .await
@@ -190,7 +190,7 @@ impl AsyncBufRead for TokioFile<RandomRead, true> {
         &mut self,
         position: Self::Position,
         buffer: BytesMut,
-    ) -> Result<ReadBytes<BytesMut, Self::Size>, Unread<Self::Error>> {
+    ) -> Result<ReadBytes<BytesMut, Self::Size>, Unread<BytesMut, Self::Error>> {
         let reader = self
             .inner
             .try_clone()
