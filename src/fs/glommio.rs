@@ -62,7 +62,8 @@ impl AsyncWrite for BufferedFile {
     async fn write(
         &mut self,
         bytes: Bytes,
-    ) -> Result<WriteOutcome<Self::Position, Self::Size>, Unwritten<Self::Error>> {
+    ) -> Result<WriteOutcome<Bytes, Self::Position, Self::Size>, Unwritten<Bytes, Self::Error>>
+    {
         let write_position: Self::Position = self.size;
 
         let write_len: Self::Size = self
@@ -197,7 +198,8 @@ impl AsyncWrite for DmaFile {
     async fn write(
         &mut self,
         bytes: Bytes,
-    ) -> Result<WriteOutcome<Self::Position, Self::Size>, Unwritten<Self::Error>> {
+    ) -> Result<WriteOutcome<Bytes, Self::Position, Self::Size>, Unwritten<Bytes, Self::Error>>
+    {
         let write_position: Self::Position = self.size;
 
         let mut buffer = self.inner.alloc_dma_buffer(bytes.len());

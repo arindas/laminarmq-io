@@ -104,7 +104,8 @@ impl<K, const FLUSH_ON_APPEND: bool> AsyncWrite for TokioFile<K, FLUSH_ON_APPEND
     async fn write(
         &mut self,
         bytes: Bytes,
-    ) -> Result<WriteOutcome<Self::Position, Self::Size>, Unwritten<Self::Error>> {
+    ) -> Result<WriteOutcome<Bytes, Self::Position, Self::Size>, Unwritten<Bytes, Self::Error>>
+    {
         let write_position = self.size();
 
         let write_len = self

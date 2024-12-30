@@ -98,18 +98,18 @@ where
 }
 
 #[derive(Clone, Debug)]
-pub struct WriteOutcome<P, S> {
+pub struct WriteOutcome<B, P, S> {
     pub location: WriteLocation<P, S>,
-    pub written: Bytes,
+    pub written: B,
 }
 
-pub struct Unwritten<E> {
-    pub unwritten: Bytes,
+pub struct Unwritten<B, E> {
+    pub unwritten: B,
     pub err: E,
 }
 
-impl<E> Unwritten<E> {
-    pub fn map_err<U, F: FnOnce(E) -> U>(self, op: F) -> Unwritten<U> {
+impl<B, E> Unwritten<B, E> {
+    pub fn map_err<U, F: FnOnce(E) -> U>(self, op: F) -> Unwritten<B, U> {
         Unwritten {
             unwritten: self.unwritten,
             err: op(self.err),
@@ -121,13 +121,22 @@ pub trait AsyncWrite: SizedEntity + FallibleEntity {
     fn write(
         &mut self,
         bytes: Bytes,
-    ) -> impl Future<Output = Result<WriteOutcome<Self::Position, Self::Size>, Unwritten<Self::Error>>>;
+    ) -> impl Future<
+        Output = Result<
+            WriteOutcome<Bytes, Self::Position, Self::Size>,
+            Unwritten<Bytes, Self::Error>,
+        >,
+    >;
 
     fn write_all(
         &mut self,
         bytes: Bytes,
-    ) -> impl Future<Output = Result<WriteOutcome<Self::Position, Self::Size>, Unwritten<Self::Error>>>
-    {
+    ) -> impl Future<
+        Output = Result<
+            WriteOutcome<Bytes, Self::Position, Self::Size>,
+            Unwritten<Bytes, Self::Error>,
+        >,
+    > {
         async {
             let write_position = self.size().into();
             let bytes_len = Self::Size::from_usize(bytes.len()).unwrap_or(zero());
@@ -177,7 +186,7 @@ pub trait StreamWrite: SizedEntity + FallibleEntity {
 }
 
 pub type StreamWriteResult<P, S, E, XE> =
-    Result<WriteLocation<P, S>, Unwritten<StreamWriteError<E, XE>>>;
+    Result<WriteLocation<P, S>, Unwritten<Bytes, StreamWriteError<E, XE>>>;
 
 #[derive(Clone, Copy, Debug)]
 pub struct StreamWriteOpts<S> {

@@ -77,7 +77,8 @@ impl AsyncWrite for TokioUringFile {
     async fn write(
         &mut self,
         bytes: Bytes,
-    ) -> Result<WriteOutcome<Self::Position, Self::Size>, Unwritten<Self::Error>> {
+    ) -> Result<WriteOutcome<Bytes, Self::Position, Self::Size>, Unwritten<Bytes, Self::Error>>
+    {
         let write_position = self.size;
 
         let (result, bytes) = self.inner.write_at(bytes, write_position).submit().await;

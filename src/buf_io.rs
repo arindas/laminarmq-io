@@ -279,7 +279,8 @@ where
     async fn write(
         &mut self,
         bytes: Bytes,
-    ) -> Result<WriteOutcome<Self::Position, Self::Size>, Unwritten<Self::Error>> {
+    ) -> Result<WriteOutcome<Bytes, Self::Position, Self::Size>, Unwritten<Bytes, Self::Error>>
+    {
         enum WriteDest {
             Buffer,
             Inner,
