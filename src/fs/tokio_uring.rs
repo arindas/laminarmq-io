@@ -5,10 +5,10 @@ use std::{
 
 use crate::{
     io_types::{
-        AppendInfo, AsyncAppend, AsyncBufRead, AsyncClose, AsyncFlush, AsyncRemove, FallibleEntity,
-        IntegerConversionError, ReadBytes, SizedEntity, UnreadError, UnwrittenError,
+        AsyncBufRead, AsyncClose, AsyncFlush, AsyncRemove, AsyncWrite, FallibleEntity,
+        IntegerConversionError, ReadBytes, SizedEntity, UnreadError, Unwritten, WriteOutcome,
     },
-    AppendLocation,
+    WriteLocation,
 };
 
 use bytes::{Bytes, BytesMut};
@@ -73,11 +73,11 @@ impl FallibleEntity for TokioUringFile {
     type Error = TokioUringFileError;
 }
 
-impl AsyncAppend for TokioUringFile {
-    async fn append(
+impl AsyncWrite for TokioUringFile {
+    async fn write(
         &mut self,
         bytes: Bytes,
-    ) -> Result<AppendInfo<Self::Position, Self::Size>, UnwrittenError<Self::Error>> {
+    ) -> Result<WriteOutcome<Self::Position, Self::Size>, Unwritten<Self::Error>> {
         let write_position = self.size;
 
         let (result, bytes) = self.inner.write_at(bytes, write_position).submit().await;
@@ -85,15 +85,15 @@ impl AsyncAppend for TokioUringFile {
         match result {
             Ok(write_len) => {
                 self.size += write_len as u64;
-                Ok(AppendInfo {
-                    bytes,
-                    location: AppendLocation {
-                        write_position,
-                        write_len: write_len as u64,
+                Ok(WriteOutcome {
+                    written: bytes,
+                    location: WriteLocation {
+                        position: write_position,
+                        len: write_len as u64,
                     },
                 })
             }
-            Err(err) => Err(UnwrittenError {
+            Err(err) => Err(Unwritten {
                 unwritten: bytes,
                 err: Self::Error::IoError(err),
             }),

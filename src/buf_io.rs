@@ -10,10 +10,9 @@ use num::{zero, CheckedSub, FromPrimitive, ToPrimitive};
 use crate::{
     anchored_buffer::{AnchoredBuffer, BufferError},
     io_types::{
-        AppendInfo, AppendLocation, AsyncAppend, AsyncBufRead, AsyncClose, AsyncFlush, AsyncRead,
-        AsyncRemove, AsyncTruncate, ByteLender, FallibleByteLender, FallibleEntity,
-        IntegerConversionError, OwnedByteLender, ReadBytes, SizedEntity, StreamRead, UnreadError,
-        UnwrittenError,
+        AsyncBufRead, AsyncClose, AsyncFlush, AsyncRead, AsyncRemove, AsyncTruncate, AsyncWrite,
+        ByteLender, FallibleByteLender, FallibleEntity, IntegerConversionError, OwnedByteLender,
+        ReadBytes, SizedEntity, StreamRead, UnreadError, Unwritten, WriteLocation, WriteOutcome,
     },
     stream::{self, Lender, Stream},
 };
@@ -65,14 +64,14 @@ where
 }
 
 #[allow(unused)]
-pub struct BufAppender<R, P, S> {
+pub struct BufWriter<R, P, S> {
     inner: R,
     buffer: AnchoredBuffer<P>,
     flush_state: FlushState,
     size: S,
 }
 
-pub enum BufAppenderError<E> {
+pub enum BufWriterError<E> {
     InnerError(E),
 
     BufferError(BufferError),
@@ -86,20 +85,20 @@ pub enum BufAppenderError<E> {
     IntegerConversionError,
 }
 
-impl<E> From<IntegerConversionError> for BufAppenderError<E> {
+impl<E> From<IntegerConversionError> for BufWriterError<E> {
     fn from(_: IntegerConversionError) -> Self {
         Self::IntegerConversionError
     }
 }
 
-impl<R, P, S> FallibleEntity for BufAppender<R, P, S>
+impl<R, P, S> FallibleEntity for BufWriter<R, P, S>
 where
     R: FallibleEntity,
 {
-    type Error = BufAppenderError<R::Error>;
+    type Error = BufWriterError<R::Error>;
 }
 
-impl<R> SizedEntity for BufAppender<R, R::Position, R::Size>
+impl<R> SizedEntity for BufWriter<R, R::Position, R::Size>
 where
     R: SizedEntity,
 {
@@ -112,7 +111,7 @@ where
     }
 }
 
-impl<R, BL> AsyncRead<BufByteLender<BL>> for BufAppender<R, R::Position, R::Size>
+impl<R, BL> AsyncRead<BufByteLender<BL>> for BufWriter<R, R::Position, R::Size>
 where
     R: AsyncRead<BL>,
     BL: ByteLender,
@@ -143,7 +142,7 @@ where
     }
 }
 
-impl<R> AsyncBufRead for BufAppender<R, R::Position, R::Size>
+impl<R> AsyncBufRead for BufWriter<R, R::Position, R::Size>
 where
     R: AsyncBufRead,
 {
@@ -206,9 +205,9 @@ pub enum FlushState {
     Clean,
 }
 
-impl<R> AsyncFlush for BufAppender<R, R::Position, R::Size>
+impl<R> AsyncFlush for BufWriter<R, R::Position, R::Size>
 where
-    R: AsyncFlush + AsyncAppend,
+    R: AsyncFlush + AsyncWrite,
 {
     async fn flush(&mut self) -> Result<(), Self::Error> {
         let flush_buffer_offset = match self.flush_state {
@@ -225,15 +224,15 @@ where
 
         let bytes_len = bytes.len();
 
-        let inner_append_result = self.inner.append(bytes).await;
+        let inner_append_result = self.inner.write(bytes).await;
 
         match inner_append_result {
-            Ok(AppendInfo {
-                bytes: _,
+            Ok(WriteOutcome {
+                written: _,
                 location:
-                    AppendLocation {
-                        write_position,
-                        write_len,
+                    WriteLocation {
+                        position: write_position,
+                        len: write_len,
                     },
             }) if write_len
                 .to_usize()
@@ -248,12 +247,12 @@ where
                 Ok(())
             }
 
-            Ok(AppendInfo {
-                bytes: _,
+            Ok(WriteOutcome {
+                written: _,
                 location:
-                    AppendLocation {
-                        write_position,
-                        write_len,
+                    WriteLocation {
+                        position: write_position,
+                        len: write_len,
                     },
             }) => {
                 self.flush_state = FlushState::Incomplete {
@@ -268,64 +267,64 @@ where
                 Err(Self::Error::FlushIncomplete)
             }
 
-            Err(UnwrittenError { unwritten: _, err }) => Err(Self::Error::InnerError(err)),
+            Err(Unwritten { unwritten: _, err }) => Err(Self::Error::InnerError(err)),
         }
     }
 }
 
-impl<R> AsyncAppend for BufAppender<R, R::Position, R::Size>
+impl<R> AsyncWrite for BufWriter<R, R::Position, R::Size>
 where
-    R: AsyncAppend + AsyncFlush,
+    R: AsyncWrite + AsyncFlush,
 {
-    async fn append(
+    async fn write(
         &mut self,
         bytes: Bytes,
-    ) -> Result<AppendInfo<Self::Position, Self::Size>, UnwrittenError<Self::Error>> {
-        enum AppendDest {
+    ) -> Result<WriteOutcome<Self::Position, Self::Size>, Unwritten<Self::Error>> {
+        enum WriteDest {
             Buffer,
             Inner,
         }
 
         enum Action {
-            Flush { dest_after_flush: AppendDest },
-            AppendToBuffer,
+            Flush { dest_after_flush: WriteDest },
+            WriteToBuffer,
         }
 
-        struct ReanchorBufferAfterFlushAndInnerAppend;
+        struct ReanchorBufferAfterFlushAndInnerWrite;
 
-        let buffer_end_position = self.buffer.end_position().map_err(|err| UnwrittenError {
+        let buffer_end_position = self.buffer.end_position().map_err(|err| Unwritten {
             unwritten: bytes.clone(),
             err: Self::Error::BufferError(err),
         })?;
 
-        let bytes_len = R::Size::from_usize(bytes.len()).ok_or_else(|| UnwrittenError {
+        let bytes_len = R::Size::from_usize(bytes.len()).ok_or_else(|| Unwritten {
             unwritten: bytes.clone(),
             err: Self::Error::IntegerConversionError,
         })?;
 
         match match match match match bytes.len() {
             n if n >= self.buffer.capacity() => Action::Flush {
-                dest_after_flush: AppendDest::Inner,
+                dest_after_flush: WriteDest::Inner,
             },
             n if n >= self.buffer.avail_to_append() => Action::Flush {
-                dest_after_flush: AppendDest::Buffer,
+                dest_after_flush: WriteDest::Buffer,
             },
-            _ => Action::AppendToBuffer,
+            _ => Action::WriteToBuffer,
         } {
             Action::Flush { dest_after_flush } => (
                 dest_after_flush,
-                self.flush().await.map_err(|err| UnwrittenError {
+                self.flush().await.map_err(|err| Unwritten {
                     unwritten: bytes.clone(),
                     err,
                 }),
             ),
-            Action::AppendToBuffer => (AppendDest::Buffer, Ok(())),
+            Action::WriteToBuffer => (WriteDest::Buffer, Ok(())),
         } {
-            (AppendDest::Buffer, Ok(_)) => {
+            (WriteDest::Buffer, Ok(_)) => {
                 let mut buffer_append_slice_mut =
                     self.buffer
                         .get_append_slice_mut()
-                        .map_err(|err| UnwrittenError {
+                        .map_err(|err| Unwritten {
                             unwritten: bytes.clone(),
                             err: Self::Error::BufferError(err),
                         })?;
@@ -334,42 +333,42 @@ where
 
                 self.buffer
                     .unsplit_append_slice(buffer_append_slice_mut, bytes.len())
-                    .map_err(|err| UnwrittenError {
+                    .map_err(|err| Unwritten {
                         unwritten: bytes.clone(),
                         err: Self::Error::BufferError(err),
                     })?;
 
                 (
                     None,
-                    Ok(AppendInfo {
-                        bytes,
-                        location: AppendLocation {
-                            write_position: buffer_end_position,
-                            write_len: bytes_len,
+                    Ok(WriteOutcome {
+                        written: bytes,
+                        location: WriteLocation {
+                            position: buffer_end_position,
+                            len: bytes_len,
                         },
                     }),
                 )
             }
-            (AppendDest::Inner, Ok(_)) => (
-                Some(ReanchorBufferAfterFlushAndInnerAppend),
+            (WriteDest::Inner, Ok(_)) => (
+                Some(ReanchorBufferAfterFlushAndInnerWrite),
                 self.inner
-                    .append(bytes)
+                    .write(bytes)
                     .await
-                    .map_err(|UnwrittenError { unwritten, err }| UnwrittenError {
+                    .map_err(|Unwritten { unwritten, err }| Unwritten {
                         unwritten,
                         err: Self::Error::InnerError(err),
                     }),
             ),
             (_, Err(err)) => (None, Err(err)),
         } {
-            (Some(ReanchorBufferAfterFlushAndInnerAppend), Ok(append_info)) => {
+            (Some(ReanchorBufferAfterFlushAndInnerWrite), Ok(append_info)) => {
                 self.buffer.re_anchor(append_info.location.end_position());
                 Ok(append_info)
             }
             (_, result) => result,
         } {
             Ok(append_info) => {
-                self.size += append_info.location.write_len;
+                self.size += append_info.location.len;
                 Ok(append_info)
             }
             Err(err) => Err(err),
@@ -377,9 +376,9 @@ where
     }
 }
 
-impl<R> AsyncClose for BufAppender<R, R::Position, R::Size>
+impl<R> AsyncClose for BufWriter<R, R::Position, R::Size>
 where
-    R: AsyncAppend + AsyncFlush + AsyncClose,
+    R: AsyncWrite + AsyncFlush + AsyncClose,
 {
     async fn close(mut self) -> Result<(), Self::Error> {
         self.flush().await?;
@@ -388,7 +387,7 @@ where
     }
 }
 
-impl<R, P, S> AsyncRemove for BufAppender<R, P, S>
+impl<R, P, S> AsyncRemove for BufWriter<R, P, S>
 where
     R: AsyncRemove,
 {
@@ -397,7 +396,7 @@ where
     }
 }
 
-impl<R> AsyncTruncate for BufAppender<R, R::Position, R::Size>
+impl<R> AsyncTruncate for BufWriter<R, R::Position, R::Size>
 where
     R: AsyncTruncate,
 {
@@ -422,7 +421,7 @@ where
     }
 }
 
-impl<R, RBL> StreamRead<BufByteLender<RBL>> for BufAppender<R, R::Position, R::Size>
+impl<R, RBL> StreamRead<BufByteLender<RBL>> for BufWriter<R, R::Position, R::Size>
 where
     R: StreamRead<RBL>,
     R::Error: 'static,

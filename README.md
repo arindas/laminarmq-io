@@ -37,8 +37,8 @@ This crate provides the following I/O related traits:
 | [`AsyncRead`]     | `Read I/O`                         | [`AsyncBufRead`], [`AsyncRead`] <br> (struct [`BufReader`])              |
 | [`AsyncBufRead`]  | `Read I/O`                         | -                                                                        |
 | [`StreamRead`]    | _Streaming_ `Read I/O`             | [`AsyncRead`] (struct [`AsyncReadStreamRead`],<br> struct [`BufReader`]) |
-| [`AsyncAppend`]   | `Write I/O`                        | [`AsyncAppend`] (struct [`BufAppender`])                                 |
-| [`StreamAppend`]  | _Streaming_ `Write I/O`            | [`AsyncAppend`] (_trait impl_)                                           |
+| [`AsyncWrite`]    | `Write I/O`                        | [`AsyncWrite`] (struct [`BufWriteer`])                                   |
+| [`StreamWrite`]   | _Streaming_ `Write I/O`            | [`AsyncWrite`] (_trait impl_)                                            |
 | [`AsyncTruncate`] | `Write I/O`                        | -                                                                        |
 | [`AsyncRemove`]   | Management                         | -                                                                        |
 | [`AsyncClose`]    | <br>Management <img width="200" /> | <br> - <img width="500" />                                               |
@@ -49,7 +49,7 @@ This crate provides the following I/O related traits:
 > Some traits in this table also have direct impls on other trait types e.g:
 >
 > ```text
-> impl<T> StreamAppend for T where T: AsyncAppend { /* ... */ }
+> impl<T> StreamWrite for T where T: AsyncWrite { /* ... */ }
 > ```
 >
 > They are marked with (_trait impl_).
@@ -58,7 +58,7 @@ This crate provides the following I/O related traits:
 
 This library makes the following improvements over existing I/O primitives in `laminarmq`:
 
-- Provides traits at individual operaton level i.e `Read` / `Append` level as opposed to a unified `Storage` trait
+- Provides traits at individual operaton level i.e `Read` / `Write` level as opposed to a unified `Storage` trait
 - All operations are exclusive with a `&mut self` receiver to avoid internal locks
 - Supports both streaming read and streaming write operations
 - Provides impls on both filessytem based APIs and cloud object storage APIs such as S3

@@ -5,9 +5,9 @@ use glommio::{
 };
 
 use crate::io_types::{
-    AppendInfo, AppendLocation, AsyncAppend, AsyncClose, AsyncFlush, AsyncRead, AsyncRemove,
-    AsyncTruncate, ByteLender, FallibleEntity, IntegerConversionError, OwnedByteLender, ReadBytes,
-    SizedEntity, UnwrittenError,
+    AsyncClose, AsyncFlush, AsyncRead, AsyncRemove, AsyncTruncate, AsyncWrite, ByteLender,
+    FallibleEntity, IntegerConversionError, OwnedByteLender, ReadBytes, SizedEntity, Unwritten,
+    WriteLocation, WriteOutcome,
 };
 
 pub enum BufferedFileError {
@@ -58,34 +58,34 @@ impl AsyncTruncate for BufferedFile {
     }
 }
 
-impl AsyncAppend for BufferedFile {
-    async fn append(
+impl AsyncWrite for BufferedFile {
+    async fn write(
         &mut self,
         bytes: Bytes,
-    ) -> Result<AppendInfo<Self::Position, Self::Size>, UnwrittenError<Self::Error>> {
+    ) -> Result<WriteOutcome<Self::Position, Self::Size>, Unwritten<Self::Error>> {
         let write_position: Self::Position = self.size;
 
         let write_len: Self::Size = self
             .inner
             .write_at(bytes.clone().into(), write_position)
             .await
-            .map_err(|err| UnwrittenError {
+            .map_err(|err| Unwritten {
                 unwritten: bytes.clone(),
                 err: BufferedFileError::InnerError(err),
             })?
             .try_into()
-            .map_err(|_| UnwrittenError {
+            .map_err(|_| Unwritten {
                 unwritten: bytes.clone(),
                 err: BufferedFileError::IntegerConversionError,
             })?;
 
         self.size += write_len;
 
-        Ok(AppendInfo {
-            bytes,
-            location: AppendLocation {
-                write_position,
-                write_len,
+        Ok(WriteOutcome {
+            written: bytes,
+            location: WriteLocation {
+                position: write_position,
+                len: write_len,
             },
         })
     }
@@ -193,11 +193,11 @@ impl AsyncTruncate for DmaFile {
     }
 }
 
-impl AsyncAppend for DmaFile {
-    async fn append(
+impl AsyncWrite for DmaFile {
+    async fn write(
         &mut self,
         bytes: Bytes,
-    ) -> Result<AppendInfo<Self::Position, Self::Size>, UnwrittenError<Self::Error>> {
+    ) -> Result<WriteOutcome<Self::Position, Self::Size>, Unwritten<Self::Error>> {
         let write_position: Self::Position = self.size;
 
         let mut buffer = self.inner.alloc_dma_buffer(bytes.len());
@@ -207,23 +207,23 @@ impl AsyncAppend for DmaFile {
             .inner
             .write_at(buffer, write_position)
             .await
-            .map_err(|err| UnwrittenError {
+            .map_err(|err| Unwritten {
                 unwritten: bytes.clone(),
                 err: DmaFileError::InnerError(err),
             })?
             .try_into()
-            .map_err(|_| UnwrittenError {
+            .map_err(|_| Unwritten {
                 unwritten: bytes.clone(),
                 err: DmaFileError::IntegerConversionError,
             })?;
 
         self.size += write_len;
 
-        Ok(AppendInfo {
-            bytes,
-            location: AppendLocation {
-                write_position,
-                write_len,
+        Ok(WriteOutcome {
+            written: bytes,
+            location: WriteLocation {
+                position: write_position,
+                len: write_len,
             },
         })
     }

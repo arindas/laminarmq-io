@@ -81,38 +81,82 @@ pub trait AsyncClose: FallibleEntity {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct AppendLocation<P, S> {
-    pub write_position: P,
-    pub write_len: S,
+pub struct WriteLocation<P, S> {
+    pub position: P,
+    pub len: S,
 }
 
-impl<P, S> AppendLocation<P, S>
+impl<P, S> WriteLocation<P, S>
 where
     P: Quantifier,
     S: Quantifier + Into<P>,
 {
     #[inline]
     pub fn end_position(&self) -> P {
-        self.write_position + self.write_len.into()
+        self.position + self.len.into()
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct AppendInfo<P, S> {
-    pub location: AppendLocation<P, S>,
-    pub bytes: Bytes,
+pub struct WriteOutcome<P, S> {
+    pub location: WriteLocation<P, S>,
+    pub written: Bytes,
 }
 
-pub struct UnwrittenError<E> {
+pub struct Unwritten<E> {
     pub unwritten: Bytes,
     pub err: E,
 }
 
-pub trait AsyncAppend: SizedEntity + FallibleEntity {
-    fn append(
+impl<E> Unwritten<E> {
+    pub fn map_err<U, F: FnOnce(E) -> U>(self, op: F) -> Unwritten<U> {
+        Unwritten {
+            unwritten: self.unwritten,
+            err: op(self.err),
+        }
+    }
+}
+
+pub trait AsyncWrite: SizedEntity + FallibleEntity {
+    fn write(
         &mut self,
         bytes: Bytes,
-    ) -> impl Future<Output = Result<AppendInfo<Self::Position, Self::Size>, UnwrittenError<Self::Error>>>;
+    ) -> impl Future<Output = Result<WriteOutcome<Self::Position, Self::Size>, Unwritten<Self::Error>>>;
+
+    fn write_all(
+        &mut self,
+        bytes: Bytes,
+    ) -> impl Future<Output = Result<WriteOutcome<Self::Position, Self::Size>, Unwritten<Self::Error>>>
+    {
+        async {
+            let write_position = self.size().into();
+            let bytes_len = Self::Size::from_usize(bytes.len()).unwrap_or(zero());
+            let mut written: Self::Size = zero();
+
+            while written < bytes_len {
+                let num_bytes_written = written.to_usize().unwrap_or(0);
+                let bytes_to_write = bytes.slice(num_bytes_written..);
+                let WriteOutcome {
+                    location:
+                        WriteLocation {
+                            position: _,
+                            len: write_len,
+                        },
+                    written: _,
+                } = self.write(bytes_to_write).await?;
+
+                written += write_len;
+            }
+
+            Ok(WriteOutcome {
+                location: WriteLocation {
+                    position: write_position,
+                    len: written,
+                },
+                written: bytes,
+            })
+        }
+    }
 }
 
 pub enum StreamAppendError<E, XE> {
@@ -133,7 +177,7 @@ pub trait StreamAppend: SizedEntity + FallibleEntity {
 }
 
 pub type StreamAppendResult<P, S, E, XE> =
-    Result<AppendLocation<P, S>, UnwrittenError<StreamAppendError<E, XE>>>;
+    Result<WriteLocation<P, S>, Unwritten<StreamAppendError<E, XE>>>;
 
 #[derive(Clone, Copy, Debug)]
 pub struct StreamAppendOpts<S> {
@@ -143,7 +187,7 @@ pub struct StreamAppendOpts<S> {
 
 impl<A> StreamAppend for A
 where
-    A: AsyncAppend + AsyncTruncate,
+    A: AsyncWrite + AsyncTruncate,
 {
     async fn append_stream<XE, X>(
         &mut self,
@@ -160,7 +204,7 @@ where
         while let Some(buf) = stream.next().await {
             match match match (buf, append_threshold) {
                 (Ok(buf), Some(thresh))
-                    if bytes_written.to_usize().ok_or_else(|| UnwrittenError {
+                    if bytes_written.to_usize().ok_or_else(|| Unwritten {
                         err: StreamAppendError::InnerError(IntegerConversionError.into()),
                         unwritten: buf.clone(),
                     })? + buf.len()
@@ -168,43 +212,40 @@ where
                 {
                     Ok(buf)
                 }
-                (Ok(buf), Some(_)) => Err(UnwrittenError {
+                (Ok(buf), Some(_)) => Err(Unwritten {
                     err: StreamAppendError::AppendOverflow,
                     unwritten: buf,
                 }),
                 (Ok(buf), None) => Ok(buf),
-                (Err(err), _) => Err(UnwrittenError {
+                (Err(err), _) => Err(Unwritten {
                     err: StreamAppendError::StreamReadError(err),
                     unwritten: Bytes::new(),
                 }),
             } {
                 Ok(buf) => self
-                    .append(buf)
+                    .write_all(buf)
                     .await
-                    .map_err(|UnwrittenError { unwritten, err }| UnwrittenError {
-                        unwritten,
-                        err: StreamAppendError::InnerError(err),
-                    }),
+                    .map_err(|x| x.map_err(StreamAppendError::InnerError)),
                 Err(error) => Err(error),
             } {
-                Ok(AppendInfo {
-                    bytes: _,
+                Ok(WriteOutcome {
+                    written: _,
                     location:
-                        AppendLocation {
-                            write_position: _,
-                            write_len,
+                        WriteLocation {
+                            position: _,
+                            len: write_len,
                         },
                 }) => bytes_written += write_len,
 
-                Err(UnwrittenError { unwritten, err }) if opts.rollback => {
+                Err(Unwritten { unwritten, err }) if opts.rollback => {
                     self.truncate(write_position)
                         .await
-                        .map_err(|err| UnwrittenError {
+                        .map_err(|err| Unwritten {
                             err: StreamAppendError::InnerError(err),
                             unwritten: unwritten.clone(),
                         })?;
 
-                    return Err(UnwrittenError { unwritten, err });
+                    return Err(Unwritten { unwritten, err });
                 }
 
                 Err(error) => {
@@ -213,9 +254,9 @@ where
             }
         }
 
-        Ok(AppendLocation {
-            write_position,
-            write_len: bytes_written,
+        Ok(WriteLocation {
+            position: write_position,
+            len: bytes_written,
         })
     }
 }

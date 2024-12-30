@@ -1,10 +1,9 @@
 use crate::io_types::{
-    AppendInfo, AsyncAppend, AsyncClose, AsyncRemove, AsyncTruncate, ByteLender,
-    FallibleByteLender, FallibleEntity, IntegerConversionError, SizedEntity, StreamRead,
-    UnwrittenError,
+    AsyncClose, AsyncRemove, AsyncTruncate, AsyncWrite, ByteLender, FallibleByteLender,
+    FallibleEntity, IntegerConversionError, SizedEntity, StreamRead, Unwritten, WriteOutcome,
 };
 use crate::stream::{self, Stream};
-use crate::AppendLocation;
+use crate::WriteLocation;
 use aws_sdk_s3::{
     operation::get_object::GetObjectOutput,
     primitives::{ByteStream, ByteStreamError},
@@ -301,14 +300,14 @@ where
     }
 }
 
-impl<BM> AsyncAppend for AwsS3BackedFile<BM>
+impl<BM> AsyncWrite for AwsS3BackedFile<BM>
 where
     BM: BlockMap,
 {
-    async fn append(
+    async fn write(
         &mut self,
         bytes: Bytes,
-    ) -> Result<AppendInfo<Self::Position, Self::Size>, UnwrittenError<Self::Error>> {
+    ) -> Result<WriteOutcome<Self::Position, Self::Size>, Unwritten<Self::Error>> {
         let block = self
             .block_size_map
             .append_block_with_block_size(bytes.len());
@@ -325,16 +324,16 @@ where
             .body(bytes.clone().into())
             .send()
             .await
-            .map_err(|err| UnwrittenError {
+            .map_err(|err| Unwritten {
                 err: AwsS3Error::AwsSdkError(err.to_string()),
                 unwritten: bytes.clone(),
             })?;
 
-        Ok(AppendInfo {
-            bytes,
-            location: AppendLocation {
-                write_position: block.offset,
-                write_len: block.size,
+        Ok(WriteOutcome {
+            written: bytes,
+            location: WriteLocation {
+                position: block.offset,
+                len: block.size,
             },
         })
     }

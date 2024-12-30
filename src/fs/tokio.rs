@@ -10,10 +10,10 @@ use tokio::{
 };
 
 use crate::io_types::{
-    AppendInfo, AsyncAppend, AsyncBufRead, AsyncClose, AsyncFlush, AsyncRemove, AsyncTruncate,
-    FallibleEntity, IntegerConversionError, ReadBytes, SizedEntity, UnreadError, UnwrittenError,
+    AsyncBufRead, AsyncClose, AsyncFlush, AsyncRemove, AsyncTruncate, AsyncWrite, FallibleEntity,
+    IntegerConversionError, ReadBytes, SizedEntity, UnreadError, Unwritten, WriteOutcome,
 };
-use crate::AppendLocation;
+use crate::WriteLocation;
 
 pub struct RandomRead;
 
@@ -100,29 +100,29 @@ impl<K, const FA: bool> AsyncTruncate for TokioFile<K, FA> {
     }
 }
 
-impl<K, const FLUSH_ON_APPEND: bool> AsyncAppend for TokioFile<K, FLUSH_ON_APPEND> {
-    async fn append(
+impl<K, const FLUSH_ON_APPEND: bool> AsyncWrite for TokioFile<K, FLUSH_ON_APPEND> {
+    async fn write(
         &mut self,
         bytes: Bytes,
-    ) -> Result<AppendInfo<Self::Position, Self::Size>, UnwrittenError<Self::Error>> {
+    ) -> Result<WriteOutcome<Self::Position, Self::Size>, Unwritten<Self::Error>> {
         let write_position = self.size();
 
         let write_len = self
             .inner
             .write(&bytes)
             .await
-            .map_err(|err| UnwrittenError {
+            .map_err(|err| Unwritten {
                 unwritten: bytes.clone(),
                 err: TokioFileError::IoError(err),
             })?
             .to_u64()
-            .ok_or_else(|| UnwrittenError {
+            .ok_or_else(|| Unwritten {
                 unwritten: bytes.clone(),
                 err: Self::Error::IntegerConversionError,
             })?;
 
         if FLUSH_ON_APPEND {
-            self.inner.flush().await.map_err(|err| UnwrittenError {
+            self.inner.flush().await.map_err(|err| Unwritten {
                 unwritten: bytes.clone(),
                 err: TokioFileError::IoError(err),
             })?;
@@ -130,11 +130,11 @@ impl<K, const FLUSH_ON_APPEND: bool> AsyncAppend for TokioFile<K, FLUSH_ON_APPEN
 
         self.size += write_len;
 
-        Ok(AppendInfo {
-            bytes,
-            location: AppendLocation {
-                write_position,
-                write_len,
+        Ok(WriteOutcome {
+            written: bytes,
+            location: WriteLocation {
+                position: write_position,
+                len: write_len,
             },
         })
     }
