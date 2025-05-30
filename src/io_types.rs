@@ -112,26 +112,18 @@ impl<B, E> Unwritten<B, E> {
     }
 }
 
+pub type WriteResult<P, S, E> = Result<WriteOutcome<Bytes, P, S>, Unwritten<Bytes, E>>;
+
 pub trait AsyncWrite: SizedEntity + FallibleEntity {
     fn write(
         &mut self,
         bytes: Bytes,
-    ) -> impl Future<
-        Output = Result<
-            WriteOutcome<Bytes, Self::Position, Self::Size>,
-            Unwritten<Bytes, Self::Error>,
-        >,
-    >;
+    ) -> impl Future<Output = WriteResult<Self::Position, Self::Size, Self::Error>>;
 
     fn write_all(
         &mut self,
         bytes: Bytes,
-    ) -> impl Future<
-        Output = Result<
-            WriteOutcome<Bytes, Self::Position, Self::Size>,
-            Unwritten<Bytes, Self::Error>,
-        >,
-    > {
+    ) -> impl Future<Output = WriteResult<Self::Position, Self::Size, Self::Error>> {
         async {
             let write_position = self.size().into();
             let bytes_len = Self::Size::from_usize(bytes.len()).unwrap_or(zero());
@@ -352,14 +344,14 @@ pub trait AsyncBufRead: SizedEntity + FallibleEntity {
     }
 }
 
+pub type VectoredReadResult<S, E> = Result<ReadBytes<Vec<BytesMut>, S>, Unread<Vec<BytesMut>, E>>;
+
 pub trait VectoredRead: SizedEntity + FallibleEntity {
     fn read_vectored_at(
         &mut self,
         position: Self::Position,
         bufs: Vec<BytesMut>,
-    ) -> impl Future<
-        Output = Result<ReadBytes<Vec<BytesMut>, Self::Size>, Unread<Vec<BytesMut>, Self::Error>>,
-    >;
+    ) -> impl Future<Output = VectoredReadResult<Self::Size, Self::Error>>;
 }
 
 pub trait ByteLender {
@@ -374,7 +366,8 @@ impl<T> ByteLender for OwnedByteLender<T>
 where
     T: Deref<Target = [u8]>,
 {
-    type ByteBuf<'a> = T
+    type ByteBuf<'a>
+        = T
     where
         Self: 'a;
 }
@@ -439,7 +432,8 @@ impl<B, E> Lender for FallibleByteLender<B, E>
 where
     B: ByteLender,
 {
-    type Item<'a> = Result<B::ByteBuf<'a>, E>
+    type Item<'a>
+        = Result<B::ByteBuf<'a>, E>
     where
         Self: 'a;
 }
