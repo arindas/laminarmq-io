@@ -18,7 +18,7 @@ use std::{
     iter,
 };
 
-use crate::object_storage::BlockMap;
+use crate::object_storage::block::BlockMap;
 
 pub const BLOCK_SIZE_MAP_KEY_SUFFIX: &str = "_block_size_map.json";
 
@@ -234,7 +234,8 @@ where
 pub struct AwsS3ByteLender;
 
 impl ByteLender for AwsS3ByteLender {
-    type ByteBuf<'a> = Bytes
+    type ByteBuf<'a>
+        = Bytes
     where
         Self: 'a;
 }
